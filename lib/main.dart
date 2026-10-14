@@ -7,37 +7,44 @@ import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'firebase_options.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/services.dart';
+import 'sound_data.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(); // Firebaseの初期化
   runApp(const YorunohikariApp());
 }
 
-// main.dart 等で最初に表示するWidget
+// 認証状態の監視ウィジェット
 class AuthWrapper extends StatelessWidget {
+  final DarkThemeOption currentOption;
+  final Function(DarkThemeOption) onSelectTheme;
+  final bool isDark;
+
   const AuthWrapper({
     super.key,
-    required DarkThemeOption currentOption,
-    required void Function(DarkThemeOption option) onSelectTheme,
-    required bool isDark,
+    required this.currentOption,
+    required this.onSelectTheme,
+    required this.isDark,
   });
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
-        // 1. 通信確認中（スプラッシュ表示）
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+        if (snapshot.hasData) {
+          return MainNavigationScreen(
+            currentOption: currentOption,
+            onSelectTheme: onSelectTheme,
+            isDark: isDark,
           );
         }
-
-        // 2. ログイン済み ➔ メインのマップ画面へ
-        if (snapshot.hasData) {
-          return const MapScreen();
-        }
-
-        // 3. 未ログイン ➔ ログイン/新規登録画面へ
         return const LoginScreen();
       },
     );
@@ -101,14 +108,17 @@ class YorunohikariApp extends StatefulWidget {
   const YorunohikariApp({super.key});
 
   @override
-  State<YorunohikariApp> createState() => _YorunohikariAppState();
+  State createState() => _YorunohikariAppState();
 }
 
-class _YorunohikariAppState extends State<YorunohikariApp> {
+class _YorunohikariAppState extends State {
   DarkThemeOption _themeOption = DarkThemeOption.midnight;
-  void _setThemeOption(DarkThemeOption option) {
+  bool _isDark = true;
+
+  void _updateTheme(DarkThemeOption option) {
     setState(() {
       _themeOption = option;
+      _isDark = (option != DarkThemeOption.light);
     });
   }
 
@@ -161,8 +171,8 @@ class _YorunohikariAppState extends State<YorunohikariApp> {
       ),
       home: AuthWrapper(
         currentOption: _themeOption,
-        onSelectTheme: _setThemeOption,
-        isDark: isDark,
+        onSelectTheme: _updateTheme,
+        isDark: _isDark,
       ),
     );
   }
@@ -188,20 +198,425 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
   int _nursingCount = 0;
   int _sleepingCount = 0;
-  String _myStatus = 'none';
+  final ValueNotifier<String> _myStatus = ValueNotifier<String>('none');
+  final TextEditingController _chatController = TextEditingController();
+  bool _isAiTabSelected = false; // false: リアルママ広場, true: AIママ相談室
+
+  List<Map<String, dynamic>> _records = [];
+
+  String _selectedRoom = 'nursing';
 
   Timer? _timer;
-  int _secondsElapsed = 0;
+  final ValueNotifier<int> _secondsElapsed = ValueNotifier<int>(0);
+  // --- BGM再生用の設定 ---
+  final AudioPlayer _audioPlayer = AudioPlayer(); // 2. プレイヤーインスタンス
+  String _currentSoundId = 'tainai';
+  bool _isBgmPlaying = false; // BGMの再生状態
+  late Future<List<SoundItem>> _soundsFuture = loadSounds();
 
-  final List<Map<String, dynamic>> _records = [];
+  // 215行目付近に追加
+  late final Stream<QuerySnapshot> _realMamaStream = FirebaseFirestore.instance
+      .collection('chats')
+      .where('roomId', isEqualTo: _selectedRoom)
+      .orderBy('timestamp', descending: true)
+      .snapshots();
+
+  late final Stream<QuerySnapshot> _aiMamaStream = FirebaseFirestore.instance
+      .collection('ai_chats')
+      .orderBy('timestamp', descending: true)
+      .snapshots();
+
+  Timer? _sleepTimer; // スリープタイマー用のタイマー
+  int _selectedTimerMinutes = 30; // 初期選択値（分）
+  final ValueNotifier<int> _remainingSeconds = ValueNotifier<int>(0);
+  bool _isTimerActive = false; // タイマーが稼働中か
+
+  // --- スリープタイマー終了・音楽停止関数 ---
+  void _stopSleepTimerAndAudio() {
+    _sleepTimer?.cancel();
+    _audioPlayer.stop();
+    setState(() {
+      _isBgmPlaying = false;
+      _isTimerActive = false;
+      _remainingSeconds.value = 0;
+    });
+  }
+
+  // --- スリープタイマー開始関数 ---
+  void _startSleepTimer(int minutes) {
+    _sleepTimer?.cancel();
+
+    if (minutes == 0) {
+      setState(() {
+        _selectedTimerMinutes = 0;
+        _isTimerActive = false;
+      });
+      _remainingSeconds.value = 0;
+      return;
+    }
+
+    setState(() {
+      _selectedTimerMinutes = minutes;
+      _isTimerActive = true;
+    });
+    _remainingSeconds.value = minutes * 60;
+
+    _sleepTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_isBgmPlaying) {
+        if (_remainingSeconds.value > 0) {
+          // setStateを使わずに値だけ減らす
+          _remainingSeconds.value--;
+        } else {
+          _stopSleepTimerAndAudio();
+        }
+      }
+    });
+  }
+
+  // --- 残り時間からカウントダウンを再開する関数 ---
+  void _resumeSleepTimer() {
+    _sleepTimer?.cancel();
+    _sleepTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_isBgmPlaying) {
+        if (_remainingSeconds.value > 0) {
+          // setStateを使わずに値だけ減らす
+          _remainingSeconds.value--;
+        } else {
+          _stopSleepTimerAndAudio();
+        }
+      }
+    });
+  }
+
+  // --- 残り時間を "24:15" 形式にフォーマットする関数 ---
+  String _formatRemainingTime(int seconds) {
+    final minutes = seconds ~/ 60;
+    final remainingSecs = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${remainingSecs.toString().padLeft(2, '0')}';
+  }
+
+  // --- タイマー選択ダイアログを表示する関数 ---
+  void _showTimerBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E2C),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        final options = [5, 15, 30, 60, 120, 240, 0];
+        return Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                "スリープタイマー設定",
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ...options.map((mins) {
+                final label = mins == 0 ? "オフ(ループ再生)" : "$mins 分";
+                return ListTile(
+                  title: Text(
+                    label,
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  trailing: _selectedTimerMinutes == mins && _isTimerActive
+                      ? const Icon(Icons.check, color: Color(0xFFFDE047))
+                      : null,
+                  onTap: () {
+                    Navigator.pop(context);
+                    _startSleepTimer(mins);
+                  },
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // --- 計測データをFirestoreに保存する関数 ---
+  Future<void> _saveRecordToFirestore(int durationSeconds) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      print("ログインしていないため保存できません");
+      return;
+    }
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('records')
+          .add({
+            'duration': durationSeconds, // 計測時間（秒）
+            'timestamp': FieldValue.serverTimestamp(), // 日時
+          });
+
+      print("Firestoreへの保存完了！");
+
+      // 保存完了後、画面上の履歴一覧を最新状態に更新
+      await _fetchRecordsFromFirestore();
+    } catch (e) {
+      print("Firestoreへの保存エラー: $e");
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribeToLights();
+    _fetchRecordsFromFirestore();
+    _initBgm(); // 3. BGMの初期設定を呼び出し
+  }
+
+  /// BGMの初期化（ループ設定＆音量調整）
+  Future<void> _initBgm() async {
+    await _audioPlayer.setReleaseMode(ReleaseMode.loop);
+    await _audioPlayer.setVolume(0.2); // ママが落ち着く控えめな音量 (0.0〜1.0)
+  }
+
+  Future<void> _toggleSound(SoundItem item) async {
+    print("=== タップされた音源情報 ===");
+    print("ID: ${item.id}");
+    print("Title: ${item.title}");
+    print("AssetPath: ${item.assetPath}");
+    if (_isBgmPlaying && _currentSoundId == item.id) {
+      // 【一時停止】
+      await _audioPlayer.pause();
+      _sleepTimer?.cancel(); // タイマーのカウントだけ停止（残り秒数は保持）
+      setState(() {
+        _isBgmPlaying = false;
+      });
+    } else {
+      // 【再生開始・再開】
+      await _audioPlayer.stop();
+      try {
+        await _audioPlayer.play(AssetSource(item.assetPath));
+        setState(() {
+          _currentSoundId = item.id;
+          _isBgmPlaying = true;
+        });
+
+        // スリープタイマーが有効（残りの時間がある）で停止していた場合は再開
+        if (_isTimerActive && _remainingSeconds.value > 0) {
+          _resumeSleepTimer();
+        }
+      } catch (e) {
+        print("BGM再生エラー: $e");
+      }
+    }
+  }
+
+  // 3. データの取得・同期関数
+  Future<void> _fetchRecordsFromFirestore() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) return;
+
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('records')
+          .orderBy('timestamp', descending: true)
+          .get();
+
+      setState(() {
+        _records = snapshot.docs.map((doc) => doc.data()).toList();
+      });
+    } catch (e) {
+      debugPrint('Firestoreからのデータ取得エラー: $e');
+    }
+  }
+
+  /// --- Gemini APIから回答をストリーミング取得する関数 ---
+  Future<void> _fetchAiResponseStream({
+    required String userPrompt,
+    required Function(String chunk) onChunk,
+    int retryCount = 0,
+  }) async {
+    const apiKey = 'AIzaSyDNLm-9CMp1nyV_V_9RgXSbJv4c-bJt48M';
+
+    final url = Uri.parse(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse',
+    );
+
+    String accumulatedText = '';
+
+    try {
+      final request = http.Request('POST', url)
+        ..headers.addAll({
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        })
+        ..body = jsonEncode({
+          'contents': [
+            {
+              'role': 'user',
+              'parts': [
+                {
+                  'text':
+                      'あなたは優しく温かいベテランママ「AIママ」です。夜中の育児で疲れているママに寄り添い、短く優しく回答してください。\nユーザー: $userPrompt',
+                },
+              ],
+            },
+          ],
+        });
+
+      final client = http.Client();
+      final response = await client.send(request);
+
+      debugPrint('【Gemini Stream API Response Code】: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        await response.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .listen((line) {
+              final trimmedLine = line.trim();
+              if (trimmedLine.startsWith('data: ')) {
+                final jsonString = trimmedLine.substring(6).trim();
+                if (jsonString.isEmpty || jsonString == '[DONE]') return;
+
+                try {
+                  final data = jsonDecode(jsonString);
+
+                  // candidates 内のパーツをすべて探索して漏れなく抽出
+                  final candidates = data['candidates'] as List?;
+                  if (candidates != null && candidates.isNotEmpty) {
+                    final parts = candidates[0]?['content']?['parts'] as List?;
+                    if (parts != null) {
+                      for (var part in parts) {
+                        final text = part['text'] as String?;
+                        if (text != null && text.isNotEmpty) {
+                          accumulatedText += text;
+                        }
+                      }
+                      // テキストが抽出できたら画面更新コールバックを呼ぶ
+                      onChunk(accumulatedText);
+                    }
+                  }
+                } catch (e) {
+                  debugPrint('Chunk parse error: $e');
+                }
+              }
+            })
+            .asFuture();
+      } else if (response.statusCode == 503 && retryCount < 2) {
+        debugPrint('503エラーが発生したためリトライします... (${retryCount + 1}回目)');
+        await Future.delayed(const Duration(seconds: 1));
+        await _fetchAiResponseStream(
+          userPrompt: userPrompt,
+          onChunk: onChunk,
+          retryCount: retryCount + 1,
+        );
+      } else {
+        final errorBody = await response.stream.bytesToString();
+        debugPrint('【API Error Body】: $errorBody');
+        if (accumulatedText.isEmpty) {
+          onChunk('少し電波が悪いみたい。時間を置いてもう一度試してね。');
+        }
+      }
+    } catch (e) {
+      debugPrint('AI Stream Exception: $e');
+      onChunk('通信エラーが発生しました。');
+    }
+  }
+
+  // --- チャット送信関数 ---
+  Future<void> _sendMessage(String text) async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      debugPrint('【送信失敗】ログインしていません');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('送信失敗: ログインしていません')));
+      }
+      return;
+    }
+
+    final trimmedText = text.trim();
+    if (trimmedText.isEmpty) return;
+
+    // 入力欄をクリア
+    _chatController.clear();
+
+    try {
+      if (_isAiTabSelected) {
+        // ==========================================
+        // 🤖 AIママ相談室の場合
+        // ==========================================
+
+        // 1. ユーザーのメッセージを Firestore に保存
+        await FirebaseFirestore.instance.collection('ai_chats').add({
+          'text': trimmedText,
+          'isUser': true,
+          'senderId': user.uid,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+
+        // 2. AIの空返信用ドキュメントを作成し、Doc IDを取得
+        final aiDocRef = await FirebaseFirestore.instance
+            .collection('ai_chats')
+            .add({
+              'text': '...',
+              'isUser': false,
+              'senderId': 'ai_mama',
+              'timestamp': FieldValue.serverTimestamp(),
+            });
+
+        // 3. ストリーミングで届いた文字をリアルタイムで Firestore に更新
+        String fullAiReply = '';
+        await _fetchAiResponseStream(
+          userPrompt: trimmedText,
+          onChunk: (fullText) {
+            fullAiReply = fullText;
+            // ドキュメントを逐次更新（画面の StreamBuilder が感知して自動描画される）
+            aiDocRef.update({'text': fullAiReply});
+          },
+        );
+      } else {
+        // ==========================================
+        // 👥 リアルママ広場の場合
+        // ==========================================
+        await FirebaseFirestore.instance.collection('chats').add({
+          'text': trimmedText,
+          'isUser': true,
+          'senderId': user.uid,
+          'roomId': _selectedRoom,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }
+
+      debugPrint('【送信成功！】');
+    } catch (e) {
+      debugPrint('【送信エラー】: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('送信エラー: $e')));
+      }
+    }
+  }
+
   final List<Map<String, dynamic>> _otherUsersLights = [];
 
   void _startTimer() {
     _timer?.cancel();
-    _secondsElapsed = 0;
+    _secondsElapsed.value = 0;
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       setState(() {
-        _secondsElapsed++;
+        _secondsElapsed.value++;
       });
     });
   }
@@ -209,7 +624,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   void _stopTimerAndOpenModal() {
     _timer?.cancel();
 
-    if (_myStatus == 'nursing') {
+    if (_myStatus.value == 'nursing') {
       _showFinishedModal();
     } else {
       _saveRecord(type: '寝かしつけ', detail: '完了');
@@ -419,24 +834,53 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  void _saveRecord({required String type, required String detail}) {
-    if (_secondsElapsed > 0) {
+  bool _isSaving = false; // 二重保存を防ぐフラグ
+
+  Future _saveRecord({required String type, required String detail}) async {
+    if (_isSaving) return; // 保存中なら何もしない
+    _isSaving = true;
+
+    if (_secondsElapsed.value > 0) {
       final now = DateTime.now();
       final timeString =
           "${now.month}/${now.day} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
 
+      final durationStr = _formatDuration(_secondsElapsed.value);
+
+      // 保存するデータのマップ構造
+      final newRecord = {
+        'type': type,
+        'duration': durationStr,
+        'date': timeString,
+        'detail': detail,
+        'timestamp': FieldValue.serverTimestamp(), // 並び替え用のタイムスタンプ
+      };
+
+      // 1. ローカルの画面表示（_recordsリスト）に即時反映
       setState(() {
-        _records.insert(0, {
-          'type': type,
-          'duration': _formatDuration(_secondsElapsed),
-          'date': timeString,
-          'detail': detail,
-        });
+        _records.insert(0, newRecord);
       });
+
+      // 2. Cloud Firestore データベースへ非同期保存
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        try {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .collection('records')
+              .add(newRecord);
+
+          await _fetchRecordsFromFirestore();
+        } catch (e) {
+          debugPrint('Firestore保存エラー: $e');
+        }
+      }
     }
 
     _setStatus('none');
-    _secondsElapsed = 0;
+    _secondsElapsed.value = 0;
+    _isSaving = false;
   }
 
   // ★【追加】指定したインデックスの記録を削除する処理
@@ -479,18 +923,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     return "$minutes:$remainingSeconds";
   }
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _subscribeToLights();
-  }
-
   void _subscribeToLights() {}
 
   List<Marker> _buildMarkers() {
@@ -512,14 +944,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       );
     }
 
-    if (_myStatus != 'none') {
+    if (_myStatus.value != 'none') {
       markers.add(
         Marker(
           point: _myLocation,
           width: 8,
           height: 8,
           child: _buildGlowDot(
-            _myStatus == 'nursing'
+            _myStatus.value == 'nursing'
                 ? const Color.fromARGB(255, 236, 231, 104)
                 : const Color.fromARGB(255, 91, 231, 166),
             isMe: true,
@@ -546,24 +978,26 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   void _setStatus(String status) {
-    setState(() {
-      if (_myStatus == status) {
-        _timer?.cancel();
-        _secondsElapsed = 0;
+    if (_myStatus.value == status) {
+      _timer?.cancel();
+      _secondsElapsed.value = 0; // setStateの外でリセット
+      setState(() {
         if (status == 'nursing') _nursingCount--;
         if (status == 'sleeping') _sleepingCount--;
-        _myStatus = 'none';
-      } else {
-        if (_myStatus == 'nursing') _nursingCount--;
-        if (_myStatus == 'sleeping') _sleepingCount--;
+        _myStatus.value = 'none';
+      });
+    } else {
+      setState(() {
+        if (_myStatus.value == 'nursing') _nursingCount--;
+        if (_myStatus.value == 'sleeping') _sleepingCount--;
 
-        _myStatus = status;
+        _myStatus.value = status;
         if (status == 'nursing') _nursingCount++;
         if (status == 'sleeping') _sleepingCount++;
+      });
 
-        _startTimer();
-      }
-    });
+      _startTimer(); // setStateの外でタイマー開始
+    }
   }
 
   void _showThemeDialog() {
@@ -738,6 +1172,21 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                                 _myLocation = _getBlurredLocation(resolvedPos);
                               });
 
+                              // Firestore へプロフィールの地域情報を保存
+                              final user = FirebaseAuth.instance.currentUser;
+                              if (user != null) {
+                                await FirebaseFirestore.instance
+                                    .collection('users')
+                                    .doc(user.uid)
+                                    .set({
+                                      'prefecture': tempPref,
+                                      'city': cityController.text,
+                                      'latitude': resolvedPos.latitude,
+                                      'longitude': resolvedPos.longitude,
+                                      'updatedAt': FieldValue.serverTimestamp(),
+                                    }, SetOptions(merge: true));
+                              }
+
                               if (context.mounted) {
                                 Navigator.pop(context);
                               }
@@ -852,20 +1301,36 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   Widget _buildChatTab() {
     return DefaultTabController(
       length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          toolbarHeight: 0, // ネストしたAppBarの高さを消す
-          bottom: const TabBar(
-            indicatorColor: Color(0xFFFDE047),
-            labelColor: Color(0xFFFDE047),
-            unselectedLabelColor: Colors.white60,
-            tabs: [
-              Tab(icon: Icon(Icons.people_outline), text: "リアルママ広場"),
-              Tab(icon: Icon(Icons.smart_toy_outlined), text: "AIママ相談室"),
-            ],
-          ),
-        ),
-        body: TabBarView(children: [_buildRealMamaChat(), _buildAiMamaChat()]),
+      child: Builder(
+        builder: (context) {
+          // タブ切り替えを検知して _isAiTabSelected フラグを自動更新
+          final TabController tabController = DefaultTabController.of(context);
+          tabController.addListener(() {
+            if (!tabController.indexIsChanging) {
+              setState(() {
+                _isAiTabSelected = tabController.index == 1;
+              });
+            }
+          });
+
+          return Scaffold(
+            appBar: AppBar(
+              toolbarHeight: 0, // ネストしたAppBarの高さを消す
+              bottom: const TabBar(
+                indicatorColor: Color(0xFFFDE047),
+                labelColor: Color(0xFFFDE047),
+                unselectedLabelColor: Colors.white60,
+                tabs: [
+                  Tab(icon: Icon(Icons.people_outline), text: "リアルママ広場"),
+                  Tab(icon: Icon(Icons.smart_toy_outlined), text: "AIママ相談室"),
+                ],
+              ),
+            ),
+            body: TabBarView(
+              children: [_buildRealMamaChat(), _buildAiMamaChat()],
+            ),
+          );
+        },
       ),
     );
   }
@@ -892,34 +1357,57 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                     children: [
                       ChoiceChip(
                         label: const Text("🍼 授乳中ルーム"),
-                        selected: true,
+                        selected: _selectedRoom == 'nursing',
                         selectedColor: const Color(0xFFFDE047),
-                        labelStyle: const TextStyle(
-                          color: Colors.black,
+                        labelStyle: TextStyle(
+                          color: _selectedRoom == 'nursing'
+                              ? Colors.black
+                              : Colors.white70,
                           fontWeight: FontWeight.bold,
                           fontSize: 12,
                         ),
-                        onSelected: (_) {},
+                        onSelected: (selected) {
+                          if (selected) {
+                            setState(() => _selectedRoom = 'nursing');
+                          }
+                        },
                       ),
                       const SizedBox(width: 8),
                       ChoiceChip(
-                        label: const Text("🌙 寝かしつけ失敗…"),
-                        selected: false,
-                        labelStyle: const TextStyle(
-                          color: Colors.white70,
+                        label: const Text("🌙 寝かしつけルーム"),
+                        selected: _selectedRoom == 'sleeping',
+                        selectedColor: const Color.fromARGB(255, 115, 204, 122),
+                        labelStyle: TextStyle(
+                          color: _selectedRoom == 'sleeping'
+                              ? Colors.black
+                              : Colors.white70,
                           fontSize: 12,
                         ),
-                        onSelected: (_) {},
+                        onSelected: (selected) {
+                          if (selected) {
+                            setState(() => _selectedRoom = 'sleeping');
+                          }
+                        },
                       ),
                       const SizedBox(width: 8),
                       ChoiceChip(
-                        label: const Text("☕ ひとりごと・雑談"),
-                        selected: false,
-                        labelStyle: const TextStyle(
-                          color: Colors.white70,
+                        label: const Text("☕ ひとりごと・雑談ルーム"),
+                        selected: _selectedRoom == 'chatting',
+                        selectedColor: const Color.fromARGB(255, 218, 110, 220),
+                        labelStyle: TextStyle(
+                          color: _selectedRoom == 'chatting'
+                              ? Colors.black
+                              : Colors.white70,
+                          fontWeight: _selectedRoom == 'chatting'
+                              ? FontWeight.bold
+                              : FontWeight.normal,
                           fontSize: 12,
                         ),
-                        onSelected: (_) {},
+                        onSelected: (selected) {
+                          if (selected) {
+                            setState(() => _selectedRoom = 'chatting');
+                          }
+                        },
                       ),
                     ],
                   ),
@@ -928,64 +1416,136 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             ],
           ),
         ),
-        // チャットメッセージ一覧
+
+        // チャットメッセージ一覧（リアルタイム取得）
         Expanded(
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              _buildChatBubble(
-                "ママA (東京都)",
-                "3ヶ月の子供が全然寝てくれない…抱っこ疲れたよ〜😭",
-                "2:15",
-                false,
-              ),
-              _buildChatBubble(
-                "ママB (大阪府)",
-                "分かります！うちも今おっぱい終わったのに目が冴えてます💦 お互い無理せずいきましょうね…！",
-                "2:18",
-                false,
-              ),
-              _buildChatBubble("自分", "同じく格闘中です！トントンして乗り切ります！", "2:20", true),
-            ],
+          child: StreamBuilder(
+            stream: _realMamaStream,
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return Center(
+                  child: Text(
+                    'エラー: ${snapshot.error}',
+                    style: const TextStyle(color: Colors.redAccent),
+                  ),
+                );
+              }
+
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              final docs = snapshot.data?.docs ?? [];
+
+              if (docs.isEmpty) {
+                return const Center(
+                  child: Text(
+                    'まだメッセージがありません。\n今夜の呟きを投稿してみましょう！',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                );
+              }
+
+              return ListView.builder(
+                reverse: true,
+                padding: const EdgeInsets.all(16),
+                itemCount: docs.length,
+                itemBuilder: (context, index) {
+                  final data = docs[index].data() as Map;
+                  final text = data['text'] ?? '';
+                  final senderId = data['senderId'] ?? '';
+                  final myUid = FirebaseAuth.instance.currentUser?.uid;
+                  final isMe = senderId == myUid;
+
+                  final Timestamp? timestamp = data['timestamp'] as Timestamp?;
+                  final DateTime dateTime =
+                      timestamp?.toDate() ?? DateTime.now();
+                  final timeStr =
+                      "${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}";
+
+                  final name = isMe
+                      ? "自分"
+                      : "ママ (${senderId.length >= 4 ? senderId.substring(0, 4) : '匿名'})";
+
+                  return _buildChatBubble(name, text, timeStr, isMe);
+                },
+              );
+            },
           ),
         ),
-        // 入力フォーム
+
         _buildMessageInput("ママたちに呟く..."),
       ],
     );
   }
 
-  // 3-B. AIママ相談室（1on1親身サポート）
+  // 3-B. AIママ相談室（1on1親身サポート・リアルタイム取得版）
   Widget _buildAiMamaChat() {
     return Column(
       children: [
         Expanded(
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              _buildChatBubble(
-                "AIママ",
-                "こんばんは。夜遅くまで本当によく頑張っていますね。どんな小さな不安でも吐き出してくださいね。どうされましたか？",
-                "2:00",
-                false,
-                isAi: true,
-              ),
-              _buildChatBubble(
-                "自分",
-                "1時間おきに起きちゃって、もう精神的に限界かもしれません…",
-                "2:02",
-                true,
-              ),
-              _buildChatBubble(
-                "AIママ",
-                "それは本当につらいですね…眠れない夜が続くと心も体も削られてしまいます。赤ちゃんが寝たら、家事は後回しにして一緒に目を閉じて休んでくださいね。あなたは十分に素晴らしいお母さんですよ。",
-                "2:03",
-                false,
-                isAi: true,
-              ),
-            ],
+          child: StreamBuilder(
+            stream: _aiMamaStream,
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return Center(
+                  child: Text(
+                    'エラー: ${snapshot.error}',
+                    style: const TextStyle(color: Colors.redAccent),
+                  ),
+                );
+              }
+
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              final docs = snapshot.data?.docs ?? [];
+
+              if (docs.isEmpty) {
+                return ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    _buildChatBubble(
+                      "AIママ",
+                      "こんばんは。夜遅くまで本当によく頑張っていますね。どんな小さな不安でも吐き出してくださいね。どうされましたか？",
+                      "",
+                      false,
+                      isAi: true,
+                    ),
+                  ],
+                );
+              }
+
+              return ListView.builder(
+                reverse: true,
+                padding: const EdgeInsets.all(16),
+                itemCount: docs.length,
+                itemBuilder: (context, index) {
+                  final data = docs[index].data() as Map;
+                  final text = data['text'] ?? '';
+                  final isUser = data['isUser'] ?? false;
+
+                  final Timestamp? timestamp = data['timestamp'] as Timestamp?;
+                  final DateTime dateTime =
+                      timestamp?.toDate() ?? DateTime.now();
+                  final timeStr =
+                      "${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}";
+
+                  return _buildChatBubble(
+                    isUser ? "自分" : "AIママ",
+                    text,
+                    timeStr,
+                    isUser,
+                    isAi: !isUser,
+                  );
+                },
+              );
+            },
           ),
         ),
+
         _buildMessageInput("AIママに悩みを相談する..."),
       ],
     );
@@ -1052,7 +1612,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  // メッセージ入力バーパーツ
+  // メッセージ入力バーパーツ（_sendMessage に統一）
   Widget _buildMessageInput(String hint) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -1061,6 +1621,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         children: [
           Expanded(
             child: TextField(
+              controller: _chatController,
               style: const TextStyle(color: Colors.white, fontSize: 14),
               decoration: InputDecoration(
                 hintText: hint,
@@ -1076,6 +1637,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   borderSide: BorderSide.none,
                 ),
               ),
+              onSubmitted: (value) => _sendMessage(value),
             ),
           ),
           const SizedBox(width: 8),
@@ -1084,7 +1646,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             radius: 20,
             child: IconButton(
               icon: const Icon(Icons.send, size: 18, color: Colors.black),
-              onPressed: () {},
+              onPressed: () =>
+                  _sendMessage(_chatController.text), // ← 統合版の送信関数を実行！
             ),
           ),
         ],
@@ -1096,156 +1659,134 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   // 4. ヒーリングBGM画面（安らぎ音源 ＆ タイマー停止）
   // ----------------------------------------------------
   Widget _buildHealingTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 再生中のミニプレイヤー表示
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF312E81), Color(0xFF1E1B4B)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF6366F1).withOpacity(0.2),
-                  blurRadius: 12,
-                  spreadRadius: 2,
-                ),
-              ],
+    return FutureBuilder<List<SoundItem>>(
+      future: _soundsFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(
+              '音源データの読み込みエラー: ${snapshot.error}',
+              style: const TextStyle(color: Colors.white),
             ),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 50,
-                      height: 50,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF6366F1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(
-                        Icons.water_drop,
-                        color: Colors.white,
-                        size: 28,
-                      ),
+          );
+        }
+
+        final soundList = snapshot.data ?? [];
+
+        // 現在選択されている曲の情報を取得（見つからなければ最初の曲）
+        final currentSound = soundList.firstWhere(
+          (s) => s.id == _currentSoundId,
+          orElse: () => soundList.isNotEmpty
+              ? soundList.first
+              : SoundItem(
+                  id: 'tainai',
+                  title: '胎内音',
+                  category: '胎内音',
+                  assetPath: 'bgm/tainaion.mp3',
+                ),
+        );
+
+        return SingleChildScrollView(
+          key: const PageStorageKey<String>('bgm_tab_scroll'),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 再生中のミニプレイヤー表示
+              // 右上にタイマーボタンを配置した音源ライブラリヘッダー
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    "ヒーリングBGM",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
                     ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: const [
-                          Text(
-                            "優しいしとしと雨",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
+                  ),
+                  InkWell(
+                    onTap: () {
+                      _showTimerBottomSheet();
+                    },
+                    borderRadius: BorderRadius.circular(20),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _isTimerActive
+                            ? const Color(0xFFFDE047).withOpacity(0.2)
+                            : Colors.white10,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: _isTimerActive
+                              ? const Color(0xFFFDE047)
+                              : Colors.transparent,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.timer_outlined,
+                            size: 14,
+                            color: _isTimerActive
+                                ? const Color(0xFFFDE047)
+                                : Colors.white60,
                           ),
-                          SizedBox(height: 4),
-                          Text(
-                            "赤ちゃんが落ち着く環境音",
-                            style: TextStyle(
-                              color: Colors.white60,
-                              fontSize: 12,
-                            ),
+                          const SizedBox(width: 4),
+                          ValueListenableBuilder<int>(
+                            valueListenable: _remainingSeconds,
+                            builder: (context, remainingSecs, child) {
+                              return Text(
+                                _isTimerActive
+                                    ? _formatRemainingTime(remainingSecs)
+                                    : "オフ",
+                                style: TextStyle(
+                                  color: _isTimerActive
+                                      ? const Color(0xFFFDE047)
+                                      : Colors.white60,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              );
+                            },
                           ),
                         ],
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(
-                        Icons.pause_circle_filled,
-                        size: 44,
-                        color: Color(0xFFFDE047),
-                      ),
-                      onPressed: () {},
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                const Divider(color: Colors.white12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: const [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.timer_outlined,
-                          size: 16,
-                          color: Colors.white60,
-                        ),
-                        SizedBox(width: 4),
-                        Text(
-                          "スリープタイマー: 30分後に停止",
-                          style: TextStyle(color: Colors.white60, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                    Text(
-                      "残り 24:15",
-                      style: TextStyle(
-                        color: Color(0xFFFDE047),
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              const Divider(color: Colors.white12),
+              const SizedBox(height: 24),
 
-          const Text(
-            "音源ライブラリ",
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
+              // JSONから読み込んだリストを動的にタイル表示
+              ...soundList.map((sound) {
+                final isPlaying = _isBgmPlaying && _currentSoundId == sound.id;
+                return _buildSoundCategoryTile(sound, isPlaying);
+              }).toList(),
+            ],
           ),
-          const SizedBox(height: 12),
-
-          // サウンドカテゴリーカード
-          _buildSoundCategoryTile(
-            "🌧️ 環境音（赤ちゃんが泣き止む）",
-            "雨の音、波の音、ホワイトノイズ",
-            Icons.cloud,
-            true,
-          ),
-          _buildSoundCategoryTile("🤱 胎内音", "心臓の音、羊水の音", Icons.favorite, false),
-          _buildSoundCategoryTile(
-            "🎵 オルゴール",
-            "きらきら星、ゆりかごの歌",
-            Icons.music_note,
-            false,
-          ),
-          _buildSoundCategoryTile(
-            "🌲 ヒーリングBGM",
-            "静かな夜の森、星空のピアノ",
-            Icons.nightlight_round,
-            false,
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
-  // BGMカテゴリータイルパーツ
-  Widget _buildSoundCategoryTile(
-    String title,
-    String subtitle,
-    IconData icon,
-    bool isPlaying,
-  ) {
+  // BGMカテゴリータイルパーツ（SoundItemを受け取ってタップで切り替え）
+  Widget _buildSoundCategoryTile(SoundItem item, bool isPlaying) {
+    // カテゴリに応じたアイコンの選択
+    IconData icon = Icons.music_note;
+    if (item.category == '心臓音') icon = Icons.favorite;
+    if (item.category == '環境音') icon = Icons.cloud;
+    if (item.category == 'きらきら星') icon = Icons.star;
+    if (item.category == '鳥のさえずり') icon = Icons.flutter_dash;
+
     return Card(
       color: const Color(0xFF1E293B),
       margin: const EdgeInsets.only(bottom: 12),
@@ -1259,7 +1800,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           child: Icon(icon, color: isPlaying ? Colors.black : Colors.white60),
         ),
         title: Text(
-          title,
+          item.title,
           style: TextStyle(
             color: Colors.white,
             fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal,
@@ -1267,14 +1808,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           ),
         ),
         subtitle: Text(
-          subtitle,
+          item.category,
           style: const TextStyle(color: Colors.white38, fontSize: 12),
         ),
         trailing: Icon(
           isPlaying ? Icons.volume_up : Icons.play_arrow_rounded,
           color: isPlaying ? const Color(0xFFFDE047) : Colors.white38,
         ),
-        onTap: () {},
+        onTap: () => _toggleSound(item), // タップした曲を再生・停止
       ),
     );
   }
@@ -1318,9 +1859,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: _myStatus == 'nursing'
+                  color: _myStatus.value == 'nursing'
                       ? const Color.fromARGB(255, 241, 243, 160)
-                      : (_myStatus == 'sleeping'
+                      : (_myStatus.value == 'sleeping'
                             ? const Color.fromARGB(255, 91, 231, 166)
                             : Colors.transparent),
                   width: 2,
@@ -1332,9 +1873,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                     markers: _buildMarkers(),
                     isDark: isDark,
                     targetLocation: _myLocation,
-                    hasActiveStatus: _myStatus != 'none',
+                    hasActiveStatus: _myStatus.value != 'none',
                   ),
-                  if (_myStatus != 'none')
+                  if (_myStatus.value != 'none')
                     Positioned(
                       bottom: 12,
                       left: 12,
@@ -1360,10 +1901,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                             Row(
                               children: [
                                 Icon(
-                                  _myStatus == 'nursing'
+                                  _myStatus.value == 'nursing'
                                       ? Icons.child_care
                                       : Icons.bedtime,
-                                  color: _myStatus == 'nursing'
+                                  color: _myStatus.value == 'nursing'
                                       ? const Color(0xFFFDE047)
                                       : const Color.fromARGB(
                                           255,
@@ -1373,11 +1914,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                                         ),
                                 ),
                                 const SizedBox(width: 5),
-                                Text(
-                                  '${_myStatus == 'nursing' ? '授乳' : '寝かしつけ'}計測中: ${_formatDuration(_secondsElapsed)}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                                ValueListenableBuilder<int>(
+                                  valueListenable: _secondsElapsed,
+                                  builder: (context, seconds, child) {
+                                    return Text(
+                                      '${_myStatus.value == 'nursing' ? '授乳' : '寝かしつけ'}計測中: ${_formatDuration(seconds)}',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    );
+                                  },
                                 ),
                               ],
                             ),
@@ -1387,7 +1933,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                                 backgroundColor: Colors.redAccent,
                                 foregroundColor: Colors.white,
                                 padding: const EdgeInsets.symmetric(
-                                  horizontal: 35,
+                                  horizontal: 20,
                                   vertical: 12,
                                 ),
                               ),
@@ -1417,12 +1963,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   icon: const Icon(Icons.child_care),
                   label: const Text('授乳対応中'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: _myStatus == 'nursing'
+                    backgroundColor: _myStatus.value == 'nursing'
                         ? const Color.fromARGB(255, 241, 243, 160)
                         : (isDark
                               ? const Color.fromARGB(233, 193, 194, 196)
                               : Colors.grey[300]),
-                    foregroundColor: _myStatus == 'nursing'
+                    foregroundColor: _myStatus.value == 'nursing'
                         ? Colors.black
                         : (isDark
                               ? const Color.fromARGB(255, 17, 15, 15)
@@ -1441,12 +1987,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   icon: const Icon(Icons.bedtime),
                   label: const Text('寝かしつけ中'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: _myStatus == 'sleeping'
+                    backgroundColor: _myStatus.value == 'sleeping'
                         ? const Color.fromARGB(255, 91, 231, 166)
                         : (isDark
                               ? const Color.fromARGB(233, 193, 194, 196)
                               : Colors.grey[300]),
-                    foregroundColor: _myStatus == 'sleeping'
+                    foregroundColor: _myStatus.value == 'sleeping'
                         ? Colors.black
                         : (isDark
                               ? const Color.fromARGB(255, 29, 24, 24)
@@ -1467,12 +2013,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final List screens = [
       mapScreen,
       _buildRecordList(),
-      _buildChatTab(), // 仮のTextから実際のWidgetクラスへ置き換え
-      _buildHealingTab(), // 仮のTextから実際のWidgetクラスへ置き換え
+      _buildChatTab(),
+      _buildHealingTab(),
     ];
 
     return Scaffold(
       appBar: AppBar(
+        centerTitle: true,
         title: const Text(
           'ヨルノヒカリ',
           style: TextStyle(fontWeight: FontWeight.bold),
@@ -1490,33 +2037,29 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           ),
         ],
       ),
-      body: screens[_currentIndex],
+      body: IndexedStack(
+        index: _currentIndex,
+        children: [
+          mapScreen,
+          _buildRecordList(),
+          _buildChatTab(),
+          _buildHealingTab(),
+        ],
+      ),
+      // BottomNavigationBar を Scaffold の正しい位置に修正
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
-        onTap: (index) => setState(() => _currentIndex = index),
         type: BottomNavigationBarType.fixed,
-        backgroundColor: cardColor,
-        selectedItemColor: isDark
-            ? const Color(0xFFFDE047)
-            : const Color(0xFF0F172A),
-        unselectedItemColor: isDark ? Colors.white38 : Colors.black38,
+        onTap: (index) {
+          setState(() {
+            _currentIndex = index;
+          });
+        },
         items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.lightbulb_outline),
-            label: '灯火',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.timer_outlined),
-            label: '記録',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.chat_bubble_outline),
-            label: 'チャット',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.music_note_outlined),
-            label: 'BGM',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.map), label: '光マップ'),
+          BottomNavigationBarItem(icon: Icon(Icons.history), label: '記録'),
+          BottomNavigationBarItem(icon: Icon(Icons.forum), label: 'チャット'),
+          BottomNavigationBarItem(icon: Icon(Icons.music_note), label: 'BGM'),
         ],
       ),
     );
@@ -1624,6 +2167,7 @@ class _JapanLightMapState extends State<JapanLightMap> {
       child: Stack(
         children: [
           FlutterMap(
+            key: const ValueKey('japan_light_map'), // ★この1行を追加！
             mapController: _mapController,
             options: const MapOptions(
               initialCenter: LatLng(36.2048, 138.2529),
@@ -1676,20 +2220,265 @@ class _JapanLightMapState extends State<JapanLightMap> {
   }
 }
 
-// 仮のマップ画面（後で実際のコードに置き換え）
-class MapScreen extends StatelessWidget {
-  const MapScreen({super.key});
+// 仮のログイン画面（後で実際のコードに置き換え）
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
   @override
-  Widget build(BuildContext context) {
-    return const Scaffold(body: Center(child: Text('マップ画面')));
-  }
+  State createState() => _LoginScreenState();
 }
 
-// 仮のログイン画面（後で実際のコードに置き換え）
-class LoginScreen extends StatelessWidget {
-  const LoginScreen({super.key});
+class _LoginScreenState extends State {
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _isSignUp = false; // ログインと新規登録の切り替えフラグ
+  bool _isLoading = false;
+
+  // メールアドレスでのログイン / 新規登録処理
+  Future _submitEmailAuth() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('メールアドレスとパスワードを入力してください')));
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      if (_isSignUp) {
+        // 新規アカウント作成
+        await FirebaseAuth.instance.createUserWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+      } else {
+        // 既存アカウントでログイン
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+      }
+      // 成功すると AuthWrapper が自動検知して MainNavigationScreen へ遷移します
+    } on FirebaseAuthException catch (e) {
+      String message = 'エラーが発生しました';
+      if (e.code == 'user-not-found') message = 'ユーザーが見つかりません';
+      if (e.code == 'wrong-password') message = 'パスワードが違います';
+      if (e.code == 'email-already-in-use') message = 'すでに使用されているメールアドレスです';
+      if (e.code == 'weak-password') message = 'パスワードは6文字以上で入力してください';
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // 匿名ログイン（お試し利用）処理
+  Future _signInAnonymously() async {
+    setState(() => _isLoading = true);
+    try {
+      await FirebaseAuth.instance.signInAnonymously();
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('お試しログインに失敗しました')));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(body: Center(child: Text('ログイン画面')));
+    return Scaffold(
+      backgroundColor: const Color(0xFF0F172A), // ミッドナイトブルー
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // アプリロゴ・アイコン表示エリア
+                const Icon(
+                  Icons.nightlight_round,
+                  size: 64,
+                  color: Color(0xFFFDE047),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'ヨルノヒカリ',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  '夜間育児の孤独を和らげる、ママたちのためのコミュニティアプリ',
+                  style: TextStyle(fontSize: 13, color: Colors.white60),
+                ),
+                const SizedBox(height: 36),
+
+                // メールアドレス入力
+                TextField(
+                  controller: _emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'メールアドレス',
+                    labelStyle: const TextStyle(color: Colors.white60),
+                    prefixIcon: const Icon(
+                      Icons.email_outlined,
+                      color: Colors.white60,
+                    ),
+                    filled: true,
+                    fillColor: const Color(0xFF1E293B),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // パスワード入力
+                TextField(
+                  controller: _passwordController,
+                  obscureText: true,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'パスワード',
+                    labelStyle: const TextStyle(color: Colors.white60),
+                    prefixIcon: const Icon(
+                      Icons.lock_outline,
+                      color: Colors.white60,
+                    ),
+                    filled: true,
+                    fillColor: const Color(0xFF1E293B),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // ログイン / 新規登録 ボタン
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _submitEmailAuth,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFFDE047),
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: _isLoading
+                        ? const CircularProgressIndicator(color: Colors.black)
+                        : Text(
+                            _isSignUp ? '新規アカウント登録' : 'ログイン',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                  ),
+                ),
+
+                // ログイン ⇔ 新規登録 の切り替え
+                TextButton(
+                  onPressed: () {
+                    setState(() => _isSignUp = !_isSignUp);
+                  },
+                  child: Text(
+                    _isSignUp
+                        ? 'すでにアカウントをお持ちの方はこちら（ログイン）'
+                        : 'アカウントをお持ちでない方はこちら（新規登録）',
+                    style: const TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+                const Row(
+                  children: [
+                    Expanded(child: Divider(color: Colors.white24)),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12),
+                      child: Text(
+                        'または',
+                        style: TextStyle(color: Colors.white38, fontSize: 12),
+                      ),
+                    ),
+                    Expanded(child: Divider(color: Colors.white24)),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                // Google連携ボタン（UI枠組み）
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      // ※Googleサインイン連携用のパッケージ設定後に処理を記述
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('GoogleサインインはFirebase側の設定後に有効化されます'),
+                        ),
+                      );
+                    },
+                    icon: const Icon(
+                      Icons.g_mobiledata,
+                      size: 28,
+                      color: Colors.white,
+                    ),
+                    label: const Text(
+                      'Googleアカウントでログイン',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.white24),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // 登録なしで試す（匿名ログイン）
+                TextButton(
+                  onPressed: _isLoading ? null : _signInAnonymously,
+                  child: const Text(
+                    '登録せずにすぐ試す（お試し利用）',
+                    style: TextStyle(color: Color(0xFF818CF8), fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

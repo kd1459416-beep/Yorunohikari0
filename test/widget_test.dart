@@ -28,3 +28,18 @@ void main() {
     expect(find.text('1'), findsOneWidget);
   });
 }
+
+class YorunohikariApp extends StatelessWidget {
+  const YorunohikariApp({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Yorunohikari',
+      home: Scaffold(
+        appBar: AppBar(title: const Text('Yorunohikari')),
+        body: const Center(child: Text('Hello, World!')),
+      ),
+    );
+  }
+}

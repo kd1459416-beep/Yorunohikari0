@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "744624841714",
+    "project_id": "yorunohikari",
+    "storage_bucket": "yorunohikari.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:744624841714:android:60ead234b78c28227bc16b",
+        "android_client_info": {
+          "package_name": "com.example.yorunohikari"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCc_eor3EeeoYJel_uFMm76BoYVghNjesk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
