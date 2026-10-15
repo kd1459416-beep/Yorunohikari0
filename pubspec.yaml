@@ -42,6 +42,8 @@ dependencies:
   google_generative_ai: ^0.4.7
   http: ^1.6.0
   audioplayers: ^6.0.0  # 最新のaudioplayersを追加
+  table_calendar: ^3.3.0
+  fl_chart: ^1.2.0
 
 
 dev_dependencies:

@@ -13,6 +13,8 @@ import 'package:http/http.dart' as http;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/services.dart';
 import 'sound_data.dart';
+import 'package:table_calendar/table_calendar.dart';
+import 'package:fl_chart/fl_chart.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -195,6 +197,8 @@ class MainNavigationScreen extends StatefulWidget {
 }
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
+  DateTime _selectedDate = DateTime.now();
+  String _activeChartType = 'nursing'; // 'nursing' (授乳) または 'sleep' (睡眠)
   int _currentIndex = 0;
   int _nursingCount = 0;
   int _sleepingCount = 0;
@@ -214,7 +218,32 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   bool _isBgmPlaying = false; // BGMの再生状態
   late Future<List<SoundItem>> _soundsFuture = loadSounds();
 
-  // 215行目付近に追加
+  // 最新の授乳記録を取得（Dart側で最新ソート）
+  Stream<QuerySnapshot> get _latestNursingStream {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return const Stream.empty();
+
+    return FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .collection('records')
+        .where('type', isEqualTo: '授乳')
+        .snapshots();
+  }
+
+  // 最新の睡眠記録を取得（Dart側で最新ソート）
+  Stream<QuerySnapshot> get _latestSleepStream {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return const Stream.empty();
+
+    return FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .collection('records')
+        .where('type', isEqualTo: '寝かしつけ')
+        .snapshots();
+  }
+
   late final Stream<QuerySnapshot> _realMamaStream = FirebaseFirestore.instance
       .collection('chats')
       .where('roomId', isEqualTo: _selectedRoom)
@@ -937,7 +966,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           child: _buildGlowDot(
             user['status'] == 'nursing'
                 ? const Color.fromARGB(255, 236, 231, 104)
-                : const Color.fromARGB(255, 91, 231, 166),
+                : const Color.fromARGB(255, 126, 87, 194),
+
             isMe: false,
           ),
         ),
@@ -953,7 +983,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           child: _buildGlowDot(
             _myStatus.value == 'nursing'
                 ? const Color.fromARGB(255, 236, 231, 104)
-                : const Color.fromARGB(255, 91, 231, 166),
+                : const Color(0xFF6366F1),
             isMe: true,
           ),
         ),
@@ -1235,63 +1265,612 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  // ★【更新】右端にゴミ箱アイコンを追加したリスト
+  // =============================================================================
+  // 記録タブメイン（ピヨログ風ヘッダー ＋ 上部サマリー ＋ 下部タイムライン/グラフ）
+  // =============================================================================
   Widget _buildRecordList() {
-    if (_records.isEmpty) {
-      return const Center(
-        child: Text(
-          'まだ記録がありません\nマップ画面でボタンを押すと計測できます',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white54),
-        ),
-      );
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: _records.length,
-      itemBuilder: (context, index) {
-        final item = _records[index];
-        final isNursing = item['type'] == '授乳';
-        return Card(
-          color: Theme.of(context).colorScheme.surface,
-          margin: const EdgeInsets.only(bottom: 12),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: isNursing
-                  ? const Color(0xFFFDE047)
-                  : const Color.fromARGB(255, 131, 247, 183),
-              child: Icon(
-                isNursing ? Icons.child_care : Icons.bedtime,
-                color: Colors.black,
+    return SafeArea(
+      child: Column(
+        children: [
+          // ---------------------------------------------------------------------
+          // 0. ピヨログ風 日付選択ヘッダー
+          // ---------------------------------------------------------------------
+          InkWell(
+            onTap: () => _showCalendarDatePicker(context),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).cardColor,
+                border: Border(bottom: BorderSide(color: Colors.white10)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.calendar_today,
+                    size: 18,
+                    color: const Color.fromARGB(255, 236, 231, 104),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${_selectedDate.year}年${_selectedDate.month}月${_selectedDate.day}日',
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const Icon(Icons.arrow_drop_down, color: Colors.grey),
+                ],
               ),
             ),
-            title: Text(
-              '${item['type']} - ${item['duration']}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (item['detail'] != null)
-                  Text(
-                    item['detail'],
-                    style: const TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+
+          // 1. 上部（1/3）: 直近サマリーカード（前回の授乳・睡眠）
+          Expanded(
+            flex: 1,
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Row(
+                children: [
+                  // 🍼 前回の授乳カード
+                  Expanded(
+                    child: StreamBuilder<QuerySnapshot>(
+                      stream: _latestNursingStream,
+                      builder: (context, snapshot) {
+                        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                          return _buildRecentSummaryCard(
+                            title: '前回の授乳',
+                            icon: Icons.baby_changing_station,
+                            accentColor: const Color.fromARGB(
+                              255,
+                              236,
+                              231,
+                              104,
+                            ),
+                            primaryValue: '記録なし',
+                            detailValue: '本日合計: 0 ml',
+                            timeAgo: '-',
+                          );
+                        }
+
+                        final docs = List.from(snapshot.data!.docs);
+                        docs.sort((a, b) {
+                          final aTime =
+                              (a.data() as Map<String, dynamic>)['timestamp']
+                                  as Timestamp?;
+                          final bTime =
+                              (b.data() as Map<String, dynamic>)['timestamp']
+                                  as Timestamp?;
+                          if (aTime == null || bTime == null) return 0;
+                          return aTime.compareTo(bTime);
+                        });
+
+                        final data = docs.last.data() as Map<String, dynamic>;
+                        final DateTime? end = (data['timestamp'] as Timestamp?)
+                            ?.toDate();
+                        final String durationStr = data['duration'] ?? '00:00';
+                        final int amount = data['amount'] ?? 0;
+
+                        // 開始時間〜終了時間の文字列を作成（例: 10/15 10:15~10:20）
+                        String timeRangeStr = '--:--';
+                        if (end != null) {
+                          final parts = durationStr.split(':');
+                          int addedMinutes = 0;
+                          int addedSeconds = 0;
+
+                          if (parts.length == 2) {
+                            addedMinutes = (int.tryParse(parts[0])) ?? 0;
+                            addedSeconds = (int.tryParse(parts[1])) ?? 0;
+                          }
+
+                          final start = end.subtract(
+                            Duration(
+                              minutes: addedMinutes,
+                              seconds: addedSeconds,
+                            ),
+                          );
+
+                          final startFormat =
+                              '${start.month}/${start.day} ${start.hour.toString().padLeft(2, '0')}:${start.minute.toString().padLeft(2, '0')}';
+                          final endFormat =
+                              '${end.hour.toString().padLeft(2, '0')}:${end.minute.toString().padLeft(2, '0')}';
+
+                          timeRangeStr = (addedMinutes > 0 || addedSeconds > 0)
+                              ? '$startFormat~$endFormat'
+                              : startFormat;
+                        }
+
+                        // 本日のミルク合計（ml）を計算
+                        int totalAmount = 0;
+                        for (var doc in docs) {
+                          final d = doc.data() as Map<String, dynamic>;
+                          final t = (d['timestamp'] as Timestamp?)?.toDate();
+                          if (t != null &&
+                              t.year == _selectedDate.year &&
+                              t.month == _selectedDate.month &&
+                              t.day == _selectedDate.day) {
+                            totalAmount += (d['amount'] as num?)?.toInt() ?? 0;
+                          }
+                        }
+
+                        final String timeAgoStr = end != null
+                            ? _calculateTimeAgo(end)
+                            : '-';
+
+                        return _buildRecentSummaryCard(
+                          title: '前回の授乳',
+                          icon: Icons.baby_changing_station,
+                          accentColor: const Color.fromARGB(255, 236, 231, 104),
+                          primaryValue:
+                              timeRangeStr, // ★ "10/15 10:15~10:20" 形式で表示
+                          detailValue: '本日合計: $totalAmount ml',
+                          timeAgo: timeAgoStr,
+                        );
+                      },
+                    ),
                   ),
-                Text(
-                  item['date'],
-                  style: const TextStyle(color: Colors.white38, fontSize: 11),
-                ),
-              ],
-            ),
-            // ★右端にゴミ箱アイコンを追加
-            trailing: IconButton(
-              icon: const Icon(Icons.delete_outline, color: Colors.white38),
-              onPressed: () => _deleteRecord(index),
+                  const SizedBox(width: 10),
+
+                  // 🌙 前回の睡眠カード
+                  Expanded(
+                    child: StreamBuilder<QuerySnapshot>(
+                      stream: _latestSleepStream,
+                      builder: (context, snapshot) {
+                        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                          return _buildRecentSummaryCard(
+                            title: '前回の睡眠',
+                            icon: Icons.nightlight_round,
+                            accentColor: const Color(0xFF7E57C2),
+                            primaryValue: '記録なし',
+                            detailValue: '本日合計: 0分',
+                            timeAgo: '-',
+                          );
+                        }
+
+                        final docs = List.from(snapshot.data!.docs);
+                        docs.sort((a, b) {
+                          final aTime =
+                              (a.data() as Map<String, dynamic>)['timestamp']
+                                  as Timestamp?;
+                          final bTime =
+                              (b.data() as Map<String, dynamic>)['timestamp']
+                                  as Timestamp?;
+                          if (aTime == null || bTime == null) return 0;
+                          return aTime.compareTo(bTime);
+                        });
+
+                        final data = docs.last.data() as Map<String, dynamic>;
+                        final DateTime? end = (data['timestamp'] as Timestamp?)
+                            ?.toDate();
+                        final String durationStr = data['duration'] ?? '00:00';
+
+                        // 開始時間〜終了時間の文字列を作成（例: 10/15 10:15~10:20）
+                        String timeRangeStr = '--:--';
+                        if (end != null) {
+                          final parts = durationStr.split(':');
+                          int addedMinutes = 0;
+                          int addedSeconds = 0;
+
+                          if (parts.length == 2) {
+                            addedMinutes = (int.tryParse(parts[0])) ?? 0;
+                            addedSeconds = (int.tryParse(parts[1])) ?? 0;
+                          }
+                          final start = end.subtract(
+                            Duration(
+                              minutes: addedMinutes,
+                              seconds: addedSeconds,
+                            ),
+                          );
+
+                          final startFormat =
+                              '${start.month}/${start.day} ${start.hour.toString().padLeft(2, '0')}:${start.minute.toString().padLeft(2, '0')}';
+                          final endFormat =
+                              '${end.hour.toString().padLeft(2, '0')}:${end.minute.toString().padLeft(2, '0')}';
+
+                          timeRangeStr = (addedMinutes > 0 || addedSeconds > 0)
+                              ? '$startFormat~$endFormat'
+                              : startFormat;
+                        }
+
+                        // ★ ここを追加：本日の合計睡眠時間（分）を計算
+                        int totalMinutes = 0;
+                        for (var doc in docs) {
+                          final d = doc.data() as Map<String, dynamic>;
+                          final t = (d['timestamp'] as Timestamp?)?.toDate();
+                          if (t != null &&
+                              t.year == _selectedDate.year &&
+                              t.month == _selectedDate.month &&
+                              t.day == _selectedDate.day) {
+                            final dur = d['duration'] ?? '00:00';
+                            final parts = dur.split(':');
+                            if (parts.length == 2) {
+                              totalMinutes += (int.tryParse(parts[0]) ?? 0);
+                            }
+                          }
+                        }
+
+                        final int hours = totalMinutes ~/ 60;
+                        final int mins = totalMinutes % 60;
+                        final String totalSleepStr = hours > 0
+                            ? '$hours時間$mins分'
+                            : '$mins分';
+
+                        final String timeAgoStr = end != null
+                            ? _calculateTimeAgo(end)
+                            : '-';
+
+                        return _buildRecentSummaryCard(
+                          title: '前回の睡眠',
+                          icon: Icons.nightlight_round,
+                          accentColor: const Color(0xFF7E57C2),
+                          primaryValue:
+                              timeRangeStr, // ★ "10/15 10:15~10:20" 形式で表示
+                          detailValue:
+                              '本日合計: $totalSleepStr', // '睡眠時間: $durationStr' から変更
+                          timeAgo: timeAgoStr,
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
+
+          // 2. 下部（2/3）: タブを廃止し、授乳・睡眠グラフのみをダイレクト表示
+          Expanded(
+            flex: 2,
+            child: Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).cardColor,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(20),
+                ),
+              ),
+              child: _buildChartTabContent(), // グラフ描画関数をそのまま呼び出し
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // -----------------------------------------------------------------------------
+  // 日付タップ時にピヨログ風ポップアップカレンダーを出す関数
+  // -----------------------------------------------------------------------------
+  void _showCalendarDatePicker(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).cardColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withOpacity(0.4),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  TableCalendar(
+                    firstDay: DateTime.utc(2020, 1, 1),
+                    lastDay: DateTime.utc(2030, 12, 31),
+                    focusedDay: _selectedDate,
+                    currentDay: _selectedDate,
+                    calendarFormat: CalendarFormat.month,
+                    headerStyle: const HeaderStyle(
+                      formatButtonVisible: false,
+                      titleCentered: true,
+                    ),
+                    onDaySelected: (selectedDay, focusedDay) {
+                      setState(() {
+                        _selectedDate = selectedDay;
+                      });
+                      Navigator.pop(context); // 日付を選んだら閉じる
+                    },
+                  ),
+                ],
+              ),
+            );
+          },
         );
       },
+    );
+  }
+
+  // -----------------------------------------------------------------------------
+  // 授乳・睡眠 切り替え型グラフ表示エリア
+  // -----------------------------------------------------------------------------
+  Widget _buildChartTabContent() {
+    final isNursing = _activeChartType == 'nursing';
+
+    return Padding(
+      padding: const EdgeInsets.all(12.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 1. 切替トグルボタン（授乳 / 睡眠）
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              ChoiceChip(
+                label: const Text('🍼 授乳量 (ml)'),
+                selected: isNursing,
+                selectedColor: const Color.fromARGB(255, 236, 231, 104),
+                onSelected: (selected) {
+                  if (selected) {
+                    setState(() => _activeChartType = 'nursing');
+                  }
+                },
+              ),
+              const SizedBox(width: 12),
+              ChoiceChip(
+                label: const Text('🌙 睡眠時間 (分)'),
+                selected: !isNursing,
+                selectedColor: const Color.fromARGB(255, 126, 87, 194),
+                onSelected: (selected) {
+                  if (selected) {
+                    setState(() => _activeChartType = 'sleep');
+                  }
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // 2. 補足テキスト
+          Text(
+            isNursing ? '📊 時間帯別の授乳量 (合計)' : '📊 時間帯別の正味睡眠時間 (寝かしつけ除外)',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+          ),
+          const SizedBox(height: 16),
+
+          // 3. グラフ本体
+          Expanded(
+            child: BarChart(
+              BarChartData(
+                alignment: BarChartAlignment.spaceAround,
+                maxY: isNursing ? 160 : 120, // 授乳はMax 160ml、睡眠はMax 120分
+                barTouchData: BarTouchData(enabled: true),
+                titlesData: FlTitlesData(
+                  show: true,
+                  topTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  rightTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      getTitlesWidget: (value, meta) {
+                        const style = TextStyle(
+                          color: Colors.grey,
+                          fontSize: 10,
+                        );
+                        switch (value.toInt()) {
+                          case 0:
+                            return const Text('00:00', style: style);
+                          case 1:
+                            return const Text('06:00', style: style);
+                          case 2:
+                            return const Text('12:00', style: style);
+                          case 3:
+                            return const Text('18:00', style: style);
+                          default:
+                            return const Text('');
+                        }
+                      },
+                    ),
+                  ),
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 32,
+                      getTitlesWidget: (value, meta) {
+                        return Text(
+                          '${value.toInt()}${isNursing ? "ml" : "分"}',
+                          style: const TextStyle(
+                            color: Colors.grey,
+                            fontSize: 9,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                borderData: FlBorderData(show: false),
+                gridData: FlGridData(
+                  show: true,
+                  drawVerticalLine: false,
+                  getDrawingHorizontalLine: (value) => FlLine(
+                    color: Colors.white.withOpacity(0.1),
+                    strokeWidth: 1,
+                  ),
+                ),
+                // 切り替え状態に応じたサンプルデータ
+                barGroups: isNursing
+                    ? [
+                        _makeSingleBarGroup(
+                          0,
+                          80,
+                          const Color.fromARGB(255, 236, 231, 104),
+                        ),
+                        _makeSingleBarGroup(
+                          1,
+                          120,
+                          const Color.fromARGB(255, 236, 231, 104),
+                        ),
+                        _makeSingleBarGroup(
+                          2,
+                          60,
+                          const Color.fromARGB(255, 236, 231, 104),
+                        ),
+                        _makeSingleBarGroup(
+                          3,
+                          100,
+                          const Color.fromARGB(255, 236, 231, 104),
+                        ),
+                      ]
+                    : [
+                        _makeSingleBarGroup(
+                          0,
+                          45,
+                          const Color.fromARGB(255, 126, 87, 194),
+                        ),
+                        _makeSingleBarGroup(
+                          1,
+                          90,
+                          const Color.fromARGB(255, 126, 87, 194),
+                        ),
+                        _makeSingleBarGroup(
+                          2,
+                          30,
+                          const Color.fromARGB(255, 126, 87, 194),
+                        ),
+                        _makeSingleBarGroup(
+                          3,
+                          60,
+                          const Color.fromARGB(255, 126, 87, 194),
+                        ),
+                      ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 単一バー用のヘルパー関数
+  BarChartGroupData _makeSingleBarGroup(int x, double yValue, Color color) {
+    return BarChartGroupData(
+      x: x,
+      barRods: [
+        BarChartRodData(
+          toY: yValue,
+          color: color,
+          width: 18,
+          borderRadius: BorderRadius.circular(6),
+        ),
+      ],
+    );
+  }
+
+  // 凡例用ウィジェット
+  Widget _buildLegendItem({required Color color, required String label}) {
+    return Row(
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 4),
+        Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+      ],
+    );
+  }
+
+  Widget _buildRecentSummaryCard({
+    required String title,
+    required IconData icon,
+    required Color accentColor,
+    required String primaryValue,
+    required String detailValue,
+    required String timeAgo,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E2230),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accentColor.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // ヘッダー（アイコン ＋ タイトル ＋ 右上に「〇分前」バッジ）
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: accentColor.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, size: 16, color: accentColor),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white70,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              // ★ 右上に「〇分前」バッジを配置
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: accentColor.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  timeAgo,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: accentColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // メイン数値/時刻（例: 10/15 11:03~11:05）
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              primaryValue,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+                letterSpacing: -0.5,
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          // 詳細情報（例: 本日合計: 80 ml）を単独で配置
+          Text(
+            detailValue,
+            style: const TextStyle(
+              fontSize: 11,
+              color: Colors.white54,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1316,13 +1895,78 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           return Scaffold(
             appBar: AppBar(
               toolbarHeight: 0, // ネストしたAppBarの高さを消す
-              bottom: const TabBar(
-                indicatorColor: Color(0xFFFDE047),
-                labelColor: Color(0xFFFDE047),
-                unselectedLabelColor: Colors.white60,
+              bottom: TabBar(
+                // 選択中のタブに応じて下線の色を切り替え
+                indicatorColor: _isAiTabSelected
+                    ? const Color(0xFF7E57C2) // AIママ相談室の時の色（パープル）
+                    : const Color.fromARGB(
+                        255,
+                        236,
+                        231,
+                        104,
+                      ), // リアルママ広場の時の色（オレンジ）
+                indicatorWeight: 3,
                 tabs: [
-                  Tab(icon: Icon(Icons.people_outline), text: "リアルママ広場"),
-                  Tab(icon: Icon(Icons.smart_toy_outlined), text: "AIママ相談室"),
+                  Tab(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.people_outline,
+                          color: !_isAiTabSelected
+                              ? const Color.fromARGB(
+                                  255,
+                                  236,
+                                  231,
+                                  104,
+                                ) // リアルママ選択時のアイコン色
+                              : Colors.white60,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'リアルママ広場',
+                          style: TextStyle(
+                            color: !_isAiTabSelected
+                                ? const Color.fromARGB(
+                                    255,
+                                    236,
+                                    231,
+                                    104,
+                                  ) // リアルママ選択時の文字色
+                                : Colors.white60,
+                            fontWeight: !_isAiTabSelected
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Tab(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.smart_toy_outlined,
+                          color: _isAiTabSelected
+                              ? const Color(0xFF7E57C2) // AIママ選択時のアイコン色
+                              : Colors.white60,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'AIママ相談室',
+                          style: TextStyle(
+                            color: _isAiTabSelected
+                                ? const Color(0xFF7E57C2) // AIママ選択時の文字色
+                                : Colors.white60,
+                            fontWeight: _isAiTabSelected
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -1358,7 +2002,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                       ChoiceChip(
                         label: const Text("🍼 授乳中ルーム"),
                         selected: _selectedRoom == 'nursing',
-                        selectedColor: const Color(0xFFFDE047),
+                        selectedColor: const Color.fromARGB(255, 236, 231, 104),
                         labelStyle: TextStyle(
                           color: _selectedRoom == 'nursing'
                               ? Colors.black
@@ -1376,7 +2020,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                       ChoiceChip(
                         label: const Text("🌙 寝かしつけルーム"),
                         selected: _selectedRoom == 'sleeping',
-                        selectedColor: const Color.fromARGB(255, 115, 204, 122),
+                        selectedColor: const Color.fromARGB(255, 126, 87, 194),
                         labelStyle: TextStyle(
                           color: _selectedRoom == 'sleeping'
                               ? Colors.black
@@ -1391,9 +2035,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                       ),
                       const SizedBox(width: 8),
                       ChoiceChip(
-                        label: const Text("☕ ひとりごと・雑談ルーム"),
+                        label: const Text("☕ 雑談ルーム"),
                         selected: _selectedRoom == 'chatting',
-                        selectedColor: const Color.fromARGB(255, 218, 110, 220),
+                        selectedColor: const Color.fromARGB(255, 88, 151, 70),
                         labelStyle: TextStyle(
                           color: _selectedRoom == 'chatting'
                               ? Colors.black
@@ -1845,7 +2489,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                 child: _buildCountCard(
                   title: '寝かしつけ中',
                   count: _sleepingCount,
-                  color: const Color.fromARGB(255, 91, 231, 166),
+                  color: const Color.fromARGB(255, 126, 87, 194),
                   cardColor: cardColor,
                   isDark: isDark,
                 ),
@@ -1862,7 +2506,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   color: _myStatus.value == 'nursing'
                       ? const Color.fromARGB(255, 241, 243, 160)
                       : (_myStatus.value == 'sleeping'
-                            ? const Color.fromARGB(255, 91, 231, 166)
+                            ? const Color.fromARGB(255, 126, 87, 194)
                             : Colors.transparent),
                   width: 2,
                 ),
@@ -1906,12 +2550,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                                       : Icons.bedtime,
                                   color: _myStatus.value == 'nursing'
                                       ? const Color(0xFFFDE047)
-                                      : const Color.fromARGB(
-                                          255,
-                                          124,
-                                          241,
-                                          202,
-                                        ),
+                                      : const Color.fromARGB(255, 126, 87, 194),
                                 ),
                                 const SizedBox(width: 5),
                                 ValueListenableBuilder<int>(
@@ -1988,7 +2627,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   label: const Text('寝かしつけ中'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _myStatus.value == 'sleeping'
-                        ? const Color.fromARGB(255, 91, 231, 166)
+                        ? const Color.fromARGB(255, 126, 87, 194)
                         : (isDark
                               ? const Color.fromARGB(233, 193, 194, 196)
                               : Colors.grey[300]),
@@ -2024,18 +2663,74 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           'ヨルノヒカリ',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.person_outline),
-            tooltip: '地域設定',
-            onPressed: _showProfileSettings,
-          ),
-          IconButton(
-            icon: const Icon(Icons.palette_outlined),
-            tooltip: '背景色を変更',
-            onPressed: _showThemeDialog,
-          ),
-        ],
+      ),
+      // ★ハンバーガーメニュー（Drawer）の追加
+      drawer: Drawer(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            // --- 1. プロフィールヘッダー ---
+            const UserAccountsDrawerHeader(
+              decoration: BoxDecoration(color: Color(0xFF1F2937)),
+              accountName: Text(
+                '〇〇ママ',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              accountEmail: Text('お子様: 双子ちゃん (0歳6ヶ月)'),
+              currentAccountPicture: CircleAvatar(
+                backgroundColor: Colors.white24,
+                child: Icon(Icons.person, color: Colors.white, size: 36),
+              ),
+            ),
+
+            // --- 2. 設定・管理項目 ---
+            ListTile(
+              leading: const Icon(Icons.person_outline),
+              title: const Text('プロフィール編集'),
+              subtitle: const Text('お名前、双子・三子設定、月齢など'),
+              onTap: () {
+                Navigator.pop(context); // メニューを閉じる
+                _showProfileSettings(); // プロフィール設定を開く
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.location_on_outlined),
+              title: const Text('地域設定'),
+              onTap: () {
+                Navigator.pop(context);
+                _showProfileSettings(); // 地域設定ダイアログまたは画面を開く
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.palette_outlined),
+              title: const Text('テーマ設定'),
+              onTap: () {
+                Navigator.pop(context);
+                _showThemeDialog(); // テーマ選択を開く
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.notifications_none),
+              title: const Text('通知設定'),
+              onTap: () {
+                Navigator.pop(context);
+                // 今後、通知設定画面を追加
+              },
+            ),
+            const Divider(), // 区切り線
+            ListTile(
+              leading: const Icon(Icons.logout, color: Colors.redAccent),
+              title: const Text(
+                'ログアウト',
+                style: TextStyle(color: Colors.redAccent),
+              ),
+              onTap: () async {
+                Navigator.pop(context);
+                await FirebaseAuth.instance.signOut();
+              },
+            ),
+          ],
+        ),
       ),
       body: IndexedStack(
         index: _currentIndex,
@@ -2046,7 +2741,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           _buildHealingTab(),
         ],
       ),
-      // BottomNavigationBar を Scaffold の正しい位置に修正
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         type: BottomNavigationBarType.fixed,
@@ -2056,9 +2750,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           });
         },
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.map), label: '光マップ'),
-          BottomNavigationBarItem(icon: Icon(Icons.history), label: '記録'),
-          BottomNavigationBarItem(icon: Icon(Icons.forum), label: 'チャット'),
+          BottomNavigationBarItem(icon: Icon(Icons.map), label: 'マップ'),
+          BottomNavigationBarItem(icon: Icon(Icons.edit_note), label: '記録'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.chat_bubble_outline),
+            label: 'チャット',
+          ),
           BottomNavigationBarItem(icon: Icon(Icons.music_note), label: 'BGM'),
         ],
       ),
@@ -2480,5 +3177,19 @@ class _LoginScreenState extends State {
         ),
       ),
     );
+  }
+}
+
+// 経過時間計算ヘルパー
+String _calculateTimeAgo(DateTime targetTime) {
+  final diff = DateTime.now().difference(targetTime);
+  if (diff.inMinutes < 1) {
+    return 'たった今';
+  } else if (diff.inMinutes < 60) {
+    return '${diff.inMinutes}分前';
+  } else if (diff.inHours < 24) {
+    return '${diff.inHours}時間前';
+  } else {
+    return '${diff.inDays}日前';
   }
 }
