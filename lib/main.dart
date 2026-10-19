@@ -15,10 +15,13 @@ import 'package:flutter/services.dart';
 import 'sound_data.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(); // Firebaseの初期化
+  // Firebase の初期化処理を追加
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await dotenv.load(fileName: ".env");
   runApp(const YorunohikariApp());
 }
 
@@ -472,7 +475,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     required Function(String chunk) onChunk,
     int retryCount = 0,
   }) async {
-    const apiKey = 'AIzaSyDNLm-9CMp1nyV_V_9RgXSbJv4c-bJt48M';
+    final apiKey = dotenv.env['GEMINI_API_KEY'] ?? '';
 
     final url = Uri.parse(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse',
@@ -1007,7 +1010,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  void _setStatus(String status) {
+  void _setStatus(String status) async {
     if (_myStatus.value == status) {
       _timer?.cancel();
       _secondsElapsed.value = 0; // setStateの外でリセット
@@ -1027,6 +1030,17 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       });
 
       _startTimer(); // setStateの外でタイマー開始
+    }
+
+    // ★ Firebase Firestore にステータス情報を保存（他端末へ共有）
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'status': _myStatus.value,
+        'latitude': _myLocation.latitude, // 位置情報を追加
+        'longitude': _myLocation.longitude,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
     }
   }
 
@@ -1607,7 +1621,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               ChoiceChip(
-                label: const Text('🍼 授乳量 (ml)'),
+                label: const Text('🍼 授乳量(ml)'),
                 selected: isNursing,
                 selectedColor: const Color.fromARGB(255, 236, 231, 104),
                 onSelected: (selected) {
@@ -1616,9 +1630,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   }
                 },
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 15),
               ChoiceChip(
-                label: const Text('🌙 睡眠時間 (分)'),
+                label: const Text('🌙 睡眠時間(分)'),
                 selected: !isNursing,
                 selectedColor: const Color.fromARGB(255, 126, 87, 194),
                 onSelected: (selected) {
@@ -1629,7 +1643,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 15),
 
           // 2. 補足テキスト
           Text(
@@ -2426,9 +2440,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   Widget _buildSoundCategoryTile(SoundItem item, bool isPlaying) {
     // カテゴリに応じたアイコンの選択
     IconData icon = Icons.music_note;
+    if (item.category == 'オルゴール1') icon = Icons.star;
+    if (item.category == 'オルゴール2') icon = Icons.medical_services;
+    if (item.category == 'オルゴール3') icon = Icons.spa;
+    if (item.category == '自然') icon = Icons.hotel;
     if (item.category == '心臓音') icon = Icons.favorite;
-    if (item.category == '環境音') icon = Icons.cloud;
-    if (item.category == 'きらきら星') icon = Icons.star;
     if (item.category == '鳥のさえずり') icon = Icons.flutter_dash;
 
     return Card(
@@ -2473,29 +2489,47 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       padding: const EdgeInsets.all(14.0),
       child: Column(
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: _buildCountCard(
-                  title: '授乳対応中',
-                  count: _nursingCount,
-                  color: const Color.fromARGB(255, 236, 231, 104),
-                  cardColor: cardColor,
-                  isDark: isDark,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildCountCard(
-                  title: '寝かしつけ中',
-                  count: _sleepingCount,
-                  color: const Color.fromARGB(255, 126, 87, 194),
-                  cardColor: cardColor,
-                  isDark: isDark,
-                ),
-              ),
-            ],
+          StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('users').snapshots(),
+            builder: (context, snapshot) {
+              int nursingCount = 0;
+              int sleepingCount = 0;
+
+              if (snapshot.hasData && snapshot.data != null) {
+                for (var doc in snapshot.data!.docs) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  final status = data['status'] as String? ?? 'none';
+                  if (status == 'nursing') nursingCount++;
+                  if (status == 'sleeping') sleepingCount++;
+                }
+              }
+
+              return Row(
+                children: [
+                  Expanded(
+                    child: _buildCountCard(
+                      title: '授乳対応中',
+                      count: nursingCount,
+                      color: const Color.fromARGB(255, 236, 231, 104),
+                      cardColor: cardColor,
+                      isDark: isDark,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildCountCard(
+                      title: '寝かしつけ中',
+                      count: sleepingCount,
+                      color: const Color.fromARGB(255, 126, 87, 194),
+                      cardColor: cardColor,
+                      isDark: isDark,
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
+
           const SizedBox(height: 16),
 
           Expanded(
@@ -2513,11 +2547,82 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               ),
               child: Stack(
                 children: [
-                  JapanLightMap(
-                    markers: _buildMarkers(),
-                    isDark: isDark,
-                    targetLocation: _myLocation,
-                    hasActiveStatus: _myStatus.value != 'none',
+                  StreamBuilder<QuerySnapshot>(
+                    stream: FirebaseFirestore.instance
+                        .collection('users')
+                        .snapshots(),
+                    builder: (context, snapshot) {
+                      List<Marker> allMarkers = [];
+
+                      if (snapshot.hasData && snapshot.data != null) {
+                        for (var doc in snapshot.data!.docs) {
+                          final data = doc.data() as Map<String, dynamic>;
+                          final status = data['status'] as String? ?? 'none';
+                          final lat = (data['latitude'] as num?)?.toDouble();
+                          final lng = (data['longitude'] as num?)?.toDouble();
+
+                          // 位置情報があり、アクティブなステータス（nursing または sleeping）の場合に光（マーカー）を作成
+                          if (lat != null && lng != null && status != 'none') {
+                            // ※既存のマーカー作成ロジックに合わせて色やアイコンを設定
+                            allMarkers.add(
+                              Marker(
+                                point: LatLng(lat, lng),
+                                width: 8,
+                                height: 8,
+                                child: Container(
+                                  width: 10,
+                                  height: 10,
+                                  decoration: BoxDecoration(
+                                    color: status == 'nursing'
+                                        ? const Color.fromARGB(
+                                            255,
+                                            241,
+                                            243,
+                                            160,
+                                          )
+                                        : const Color.fromARGB(
+                                            255,
+                                            126,
+                                            87,
+                                            194,
+                                          ),
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color:
+                                            (status == 'nursing'
+                                                    ? const Color.fromARGB(
+                                                        255,
+                                                        241,
+                                                        243,
+                                                        160,
+                                                      )
+                                                    : const Color.fromARGB(
+                                                        255,
+                                                        126,
+                                                        87,
+                                                        194,
+                                                      ))
+                                                .withOpacity(0.8),
+                                        blurRadius: 8,
+                                        spreadRadius: 7,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          }
+                        }
+                      }
+
+                      return JapanLightMap(
+                        markers: allMarkers,
+                        isDark: isDark,
+                        targetLocation: _myLocation,
+                        hasActiveStatus: _myStatus.value != 'none',
+                      );
+                    },
                   ),
                   if (_myStatus.value != 'none')
                     Positioned(
@@ -2702,19 +2807,77 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.palette_outlined),
-              title: const Text('テーマ設定'),
+              leading: const Icon(Icons.brightness_medium),
+              title: const Text('画面の明るさ'),
               onTap: () {
                 Navigator.pop(context);
                 _showThemeDialog(); // テーマ選択を開く
               },
             ),
             ListTile(
-              leading: const Icon(Icons.notifications_none),
-              title: const Text('通知設定'),
+              leading: const Icon(Icons.copyright, color: Colors.white70),
+              title: const Text(
+                'クレジット表記',
+                style: TextStyle(color: Colors.white),
+              ),
               onTap: () {
-                Navigator.pop(context);
-                // 今後、通知設定画面を追加
+                Navigator.pop(context); // ドロワーを閉じる
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    backgroundColor: const Color(0xFF1E1E2C),
+                    title: const Text(
+                      '使用音源・素材クレジット',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    content: const SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '本アプリで使用しているBGM・効果音は、以下のサイト様よりお借りしています。',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 13,
+                            ),
+                          ),
+                          SizedBox(height: 16),
+                          const Text(
+                            '【音源・効果音】\n'
+                            '・OtoLogic 様\n'
+                            '・VSQ plus+ 様\n'
+                            '・効果音ラボ 様\n'
+                            '・FREE BGM 様\n\n'
+                            '【地図データ】\n'
+                            '・© OpenStreetMap contributors\n'
+                            '・Tiles © Esri — Source: Esri, DeLorme, NAVTEQ\n\n'
+                            '【AI機能】\n'
+                            '・Powered by Gemini API',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              height: 1.4,
+                            ),
+                          ), // Text
+                        ],
+                      ),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text(
+                          '閉じる',
+                          style: TextStyle(color: Colors.amber),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
               },
             ),
             const Divider(), // 区切り線
@@ -2729,9 +2892,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                 await FirebaseAuth.instance.signOut();
               },
             ),
-          ],
-        ),
-      ),
+          ], // ← children の終わり
+        ), // ← ListView の終わり
+      ), // ← Drawer の終わり
+
       body: IndexedStack(
         index: _currentIndex,
         children: [

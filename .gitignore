@@ -45,3 +45,4 @@ app.*.map.json
 /android/app/release
 demo.mp4
 demo.mp5
+.env
