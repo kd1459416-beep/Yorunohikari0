@@ -46,3 +46,5 @@ app.*.map.json
 demo.mp4
 demo.mp5
 .env
+.vercel
+.env*

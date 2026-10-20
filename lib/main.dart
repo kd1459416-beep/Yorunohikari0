@@ -16,6 +16,7 @@ import 'sound_data.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:google_generative_ai/google_generative_ai.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -475,91 +476,29 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     required Function(String chunk) onChunk,
     int retryCount = 0,
   }) async {
-    final apiKey = dotenv.env['GEMINI_API_KEY'] ?? '';
-
-    final url = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse',
-    );
-
-    String accumulatedText = '';
-
+    final apiKey = const String.fromEnvironment('GEMINI_API_KEY').isNotEmpty
+        ? const String.fromEnvironment('GEMINI_API_KEY')
+        : (dotenv.env['GEMINI_API_KEY'] ?? '');
     try {
-      final request = http.Request('POST', url)
-        ..headers.addAll({
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        })
-        ..body = jsonEncode({
-          'contents': [
-            {
-              'role': 'user',
-              'parts': [
-                {
-                  'text':
-                      'あなたは優しく温かいベテランママ「AIママ」です。夜中の育児で疲れているママに寄り添い、短く優しく回答してください。\nユーザー: $userPrompt',
-                },
-              ],
-            },
-          ],
-        });
+      // 公式SDKが適切なモデルとエンドポイントを自動選択します
+      final model = GenerativeModel(model: 'gemini-3.8-flash', apiKey: apiKey);
+      final prompt =
+          'あなたは優しく温かいベテランママ「AIママ」です。夜中の悩みに寄り添って答えてください。\n\n相談: $userPrompt';
+      final content = [Content.text(prompt)];
 
-      final client = http.Client();
-      final response = await client.send(request);
+      String accumulatedText = '';
 
-      debugPrint('【Gemini Stream API Response Code】: ${response.statusCode}');
+      final response = model.generateContentStream(content);
 
-      if (response.statusCode == 200) {
-        await response.stream
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())
-            .listen((line) {
-              final trimmedLine = line.trim();
-              if (trimmedLine.startsWith('data: ')) {
-                final jsonString = trimmedLine.substring(6).trim();
-                if (jsonString.isEmpty || jsonString == '[DONE]') return;
-
-                try {
-                  final data = jsonDecode(jsonString);
-
-                  // candidates 内のパーツをすべて探索して漏れなく抽出
-                  final candidates = data['candidates'] as List?;
-                  if (candidates != null && candidates.isNotEmpty) {
-                    final parts = candidates[0]?['content']?['parts'] as List?;
-                    if (parts != null) {
-                      for (var part in parts) {
-                        final text = part['text'] as String?;
-                        if (text != null && text.isNotEmpty) {
-                          accumulatedText += text;
-                        }
-                      }
-                      // テキストが抽出できたら画面更新コールバックを呼ぶ
-                      onChunk(accumulatedText);
-                    }
-                  }
-                } catch (e) {
-                  debugPrint('Chunk parse error: $e');
-                }
-              }
-            })
-            .asFuture();
-      } else if (response.statusCode == 503 && retryCount < 2) {
-        debugPrint('503エラーが発生したためリトライします... (${retryCount + 1}回目)');
-        await Future.delayed(const Duration(seconds: 1));
-        await _fetchAiResponseStream(
-          userPrompt: userPrompt,
-          onChunk: onChunk,
-          retryCount: retryCount + 1,
-        );
-      } else {
-        final errorBody = await response.stream.bytesToString();
-        debugPrint('【API Error Body】: $errorBody');
-        if (accumulatedText.isEmpty) {
-          onChunk('少し電波が悪いみたい。時間を置いてもう一度試してね。');
+      await for (final chunk in response) {
+        if (chunk.text != null && chunk.text!.isNotEmpty) {
+          accumulatedText += chunk.text!;
+          onChunk(accumulatedText);
         }
       }
     } catch (e) {
-      debugPrint('AI Stream Exception: $e');
-      onChunk('通信エラーが発生しました。');
+      debugPrint('Gemini通信エラー: $e');
+      throw e;
     }
   }
 

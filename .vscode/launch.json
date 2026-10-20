@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Yorunohikari",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "args": [
+        "--dart-define",
+        "GROQ_API_KEY=gsk_ここに実際のGroqキー"
+      ]
+    }
+  ]
+}
