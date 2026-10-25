@@ -76,7 +76,7 @@
 
 ```bash
 # 1. リポジトリをクローン
-git clone [https://github.com/kd1459416-beep/Yorunohikari0.git](https://github.com/kd1459416-beep/Yorunohikari0.git)
+git clone https://github.com/kd1459416-beep/Yorunohikari0.git
 
 # 2. フォルダへ移動
 cd Yorunohikari0
