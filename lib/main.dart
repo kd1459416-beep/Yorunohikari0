@@ -476,9 +476,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     required Function(String chunk) onChunk,
     int retryCount = 0,
   }) async {
-    final apiKey = const String.fromEnvironment('GEMINI_API_KEY').isNotEmpty
-        ? const String.fromEnvironment('GEMINI_API_KEY')
-        : (dotenv.env['GEMINI_API_KEY'] ?? '');
+    final apiKey = dotenv.env['GEMINI_API_KEY'] ?? '';
     try {
       // 公式SDKが適切なモデルとエンドポイントを自動選択します
       final model = GenerativeModel(model: 'gemini-3.8-flash', apiKey: apiKey);
