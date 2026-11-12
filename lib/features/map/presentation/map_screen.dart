@@ -91,7 +91,11 @@ class _MapScreenState extends State<MapScreen>
     required bool dark,
     required String? myUid,
   }) {
-    final color = PresenceColors.at(e.ageAt(_now), dark: dark);
+    final color = PresenceColors.at(
+      e.ageAt(_now),
+      dark: dark,
+      sleeping: e.status == CareStatus.sleeping, // 寝かしつけの灯りは青紫
+    );
     final mine = e.uid == myUid;
     return Marker(
       point: e.position,

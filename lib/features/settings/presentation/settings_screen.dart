@@ -28,7 +28,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _openProfile() async {
     await _push(context, const ProfileEditScreen());
     // 戻ってきたら、保存した内容を読み直す
-    if (mounted) setState(() => _profile = _users.load());
+    if (mounted) {
+      setState(() {
+        _profile = _users.load(); // 代入だけ。値を返さない書き方にする
+      });
+    }
   }
 
   String? _summary(Map<String, dynamic>? d) {

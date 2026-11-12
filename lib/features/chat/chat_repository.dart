@@ -38,13 +38,10 @@ class ChatRepository {
 
   String? get uid => _auth.currentUser?.uid;
 
-  /// 直近の朝5時（5時より前なら前日の5時）
+  /// 現在時刻から24時間前（投稿から24時間経過でタイムラインから非表示）
   static DateTime lastResetAt([DateTime? now]) {
     final n = now ?? DateTime.now();
-    final today5 = DateTime(n.year, n.month, n.day, 5);
-    return n.isBefore(today5)
-        ? today5.subtract(const Duration(days: 1))
-        : today5;
+    return n.subtract(const Duration(hours: 24));
   }
 
   List<ChatMessage> _parse(QuerySnapshot<Map<String, dynamic>> s) =>
