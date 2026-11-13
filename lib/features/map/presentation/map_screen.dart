@@ -98,7 +98,7 @@ class _MapScreenState extends State<MapScreen>
     );
     final mine = e.uid == myUid;
     return Marker(
-      point: e.position,
+      point: e.position!,
       width: 40, // 灯りは小さいので、タップできる範囲を広げる
       height: 40,
       child: GestureDetector(
@@ -119,7 +119,7 @@ class _MapScreenState extends State<MapScreen>
   /// 下端が灯りの位置に来るので、吹き出しは灯りの真上に出る
   Marker _bubbleMarker(Presence target) {
     return Marker(
-      point: target.position,
+      point: target.position!,
       width: CheerBubble.width,
       height: CheerBubble.height,
       alignment: Alignment.topCenter,
@@ -181,10 +181,12 @@ class _MapScreenState extends State<MapScreen>
                     child: JapanLightMap(
                       markers: [
                         for (final e in list)
-                          _lightMarker(e, dark: dark, myUid: myUid),
+                          if (e.position != null)
+                            _lightMarker(e, dark: dark, myUid: myUid),
                       ],
                       overlayMarkers: [
-                        if (selected != null) _bubbleMarker(selected),
+                        if (selected != null && selected.position != null)
+                          _bubbleMarker(selected),
                       ],
                       onMapTap: _closeBubble,
                     ),

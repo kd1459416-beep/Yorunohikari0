@@ -1,55 +1,180 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 
-class GeminiService {
-  GeminiService({String? apiKey})
-    : _model = GenerativeModel(
-        model: _modelName,
-        apiKey: apiKey ?? dotenv.env['GEMINI_API_KEY'] ?? '',
-        systemInstruction: Content.system(_persona),
-      );
+/// 会話の1ターン（履歴として Gemini に渡す）
+class AiTurn {
+  const AiTurn({required this.isUser, required this.text});
 
-  // 元コードの値のまま。有効なモデル名か要確認（要件書では gemini-1.5-flash）
-  static const _modelName = 'gemini-3.8-flash';
+  final bool isUser;
+  final String text;
+}
+
+/// 失敗の種類。画面には [GeminiFailure.userMessage] をそのまま出せる。
+enum GeminiFailureKind {
+  missingKey,
+  invalidKey,
+  overloaded,
+  quota,
+  blocked,
+  network,
+  unknown,
+}
+
+class GeminiFailure implements Exception {
+  const GeminiFailure(this.kind);
+
+  final GeminiFailureKind kind;
+
+  String get userMessage => switch (kind) {
+    GeminiFailureKind.missingKey =>
+      'APIキーが設定されていません。.env の GEMINI_API_KEY を確認してください。',
+    GeminiFailureKind.invalidKey => 'APIキーが正しくないか、利用が許可されていません。',
+    GeminiFailureKind.overloaded => 'いま混み合っていて、回答できませんでした。少し待って、もう一度送ってください。',
+    GeminiFailureKind.quota => '利用回数の上限に達しました。しばらくしてからお試しください。',
+    GeminiFailureKind.blocked => '内容の都合で回答を作れませんでした。言い方を変えて送ってみてください。',
+    GeminiFailureKind.network => '通信できませんでした。接続を確認して、もう一度送ってください。',
+    GeminiFailureKind.unknown => '回答を取得できませんでした。もう一度お試しください。',
+  };
+
+  /// 待ってから同じモデルで、もう一度試す価値があるか
+  bool get canRetry =>
+      kind == GeminiFailureKind.overloaded || kind == GeminiFailureKind.network;
+
+  /// 別のモデルでも同じ結果になるので、すぐ打ち切るか
+  bool get isFatal =>
+      kind == GeminiFailureKind.missingKey ||
+      kind == GeminiFailureKind.invalidKey ||
+      kind == GeminiFailureKind.blocked;
+}
+
+/// Gemini API との通信だけを担当する。画面や保存の処理は知らない。
+class GeminiService {
+  /// 先頭から順に試す。混雑などで失敗したら、次のモデルに切り替える
+  static const _models = ['gemini-3.8-flash', 'gemini-3.5-flash-lite'];
+
+  /// 同じモデルでの再試行回数（待ち時間は 1秒 → 2秒）
+  static const _maxRetries = 2;
 
   static const _persona = '''
-夜間の授乳や寝かしつけ、育児の孤独感で悩む保護者の相談に乗ってください。
-以下の対話プロセスを大切にして応答します：
+夜間の授乳や寝かしつけで悩む保護者の相談に乗ってください。
+落ち着いた自然な話し言葉で、短く具体的に答えます。
+絵文字や大げさな励ましは使いません。人間であるとは名乗りません。
+体調や発育など医療判断が必要な内容は、小児科への相談を勧めてください。''';
 
-1. 【感情の承認（Emotional Validation）】
-   解決策や具体的なアドバイスを急ぐ前に、まずは「夜中に一人で本当にお疲れ様です」
-  「眠れない中、十分頑張っていますよ」と、保護者の辛さや感情を無条件に受け止め、肯定してください。
-2. 【同調性と低負荷な応答（Attunement）】
-   深夜で疲労している保護者のペースに寄り添い、落ち着いた自然な話し言葉で、
-   3〜4行程度の短く優しい文章で答えます。絵文字や大げさな励ましは使いません。
-3. 【安全の確保と専門家への誘導】
-   人間であるとは名乗りません。体調や発育など医療判断が必要な内容は小児科や#8000への相談を勧め、
-   もし強い希死念慮や赤ちゃんを傷つけそうな衝動が語られた場合は、
-   否定せず寄り添った上で地域の保健センターや相談窓口への連絡を優しく促してください。''';
-
-  final GenerativeModel _model;
-
-  /// 過去の会話履歴とユーザー情報（任意）を踏まえて応答を逐次流す
+  /// 回答を、届いた分までつなげたテキストとして、少しずつ流す。
+  /// 失敗したときは [GeminiFailure] を投げる。
   Stream<String> reply(
     String message, {
-    List<Content> history = const [],
-    String? babyContext, // 例: "生後3ヶ月の赤ちゃんを育児中"
+    List<AiTurn> history = const [],
   }) async* {
-    // 1. 過去の会話履歴をセットしてチャットセッションを開始（文脈の記憶）
-    final chat = _model.startChat(history: history);
+    final apiKey = dotenv.env['GEMINI_API_KEY'] ?? '';
+    if (apiKey.isEmpty) throw const GeminiFailure(GeminiFailureKind.missingKey);
 
-    // 2. ユーザーの状況（月齢など）があれば、文脈としてメッセージに添える
-    final prompt = (babyContext != null && babyContext.isNotEmpty)
-        ? '【相談者の状況: $babyContext】\n$message'
-        : message;
+    GeminiFailure? lastFailure;
+    for (final modelName in _models) {
+      for (var attempt = 0; attempt <= _maxRetries; attempt++) {
+        var emittedAnything = false;
+        try {
+          await for (final text in _streamFrom(
+            modelName,
+            apiKey,
+            message,
+            history,
+          )) {
+            emittedAnything = true;
+            yield text;
+          }
+          return; // 成功
+        } catch (error) {
+          final failure = _classify(error);
+          lastFailure = failure;
+          debugPrint('Gemini失敗 [$modelName / ${attempt + 1}回目]: $error');
 
-    // 3. ストリーミングで返信を受信
+          // 途中まで出ているもの・どのモデルでも同じ失敗は、やり直さない
+          if (emittedAnything || failure.isFatal) throw failure;
+
+          if (failure.canRetry && attempt < _maxRetries) {
+            await Future<void>.delayed(Duration(seconds: attempt + 1));
+            continue; // 同じモデルで、もう一度
+          }
+          break; // 次のモデルへ
+        }
+      }
+    }
+    throw lastFailure ?? const GeminiFailure(GeminiFailureKind.unknown);
+  }
+
+  Stream<String> _streamFrom(
+    String modelName,
+    String apiKey,
+    String message,
+    List<AiTurn> history,
+  ) async* {
+    final model = GenerativeModel(
+      model: modelName,
+      apiKey: apiKey,
+      systemInstruction: Content.system(_persona),
+    );
+    final chat = model.startChat(history: _toContents(history));
+
     var text = '';
-    await for (final chunk in chat.sendMessageStream(Content.text(prompt))) {
-      final t = chunk.text;
-      if (t == null || t.isEmpty) continue;
-      text += t;
+    await for (final chunk in chat.sendMessageStream(Content.text(message))) {
+      final piece = chunk.text;
+      if (piece == null || piece.isEmpty) continue;
+      text += piece;
       yield text;
     }
+    // 何も返ってこなかった（安全フィルターなど）
+    if (text.isEmpty) throw const GeminiFailure(GeminiFailureKind.blocked);
+  }
+
+  /// 履歴を Gemini が受け付ける形に整える。
+  /// 先頭は user、user と model が交互に並ぶこと、最後は model で終わること。
+  List<Content> _toContents(List<AiTurn> turns) {
+    final result = <Content>[];
+    for (final turn in turns) {
+      final role = turn.isUser ? 'user' : 'model';
+      // 同じ役割が続いたら、新しい方だけ残す
+      if (result.isNotEmpty && result.last.role == role) result.removeLast();
+      if (result.isEmpty && role == 'model') continue; // 先頭は必ず user
+      result.add(Content(role, [TextPart(turn.text)]));
+    }
+    // 最後が user のままだと、次の質問と user が連続してしまうので外す
+    if (result.isNotEmpty && result.last.role == 'user') result.removeLast();
+    return result;
+  }
+
+  /// 例外の文面から、失敗の種類を見分ける
+  static GeminiFailure _classify(Object error) {
+    if (error is GeminiFailure) return error;
+    if (error is InvalidApiKey)
+      return const GeminiFailure(GeminiFailureKind.invalidKey);
+
+    final text = error.toString().toLowerCase();
+    bool has(List<String> words) => words.any(text.contains);
+
+    if (has(['high demand', 'overloaded', 'unavailable', '503'])) {
+      return const GeminiFailure(GeminiFailureKind.overloaded);
+    }
+    if (has(['quota', 'resource_exhausted', '429', 'rate limit'])) {
+      return const GeminiFailure(GeminiFailureKind.quota);
+    }
+    if (has(['api key not valid', 'api_key_invalid', 'permission_denied'])) {
+      return const GeminiFailure(GeminiFailureKind.invalidKey);
+    }
+    if (has([
+      'socketexception',
+      'failed host lookup',
+      'clientexception',
+      'timed out',
+    ])) {
+      return const GeminiFailure(GeminiFailureKind.network);
+    }
+    if (has(['blocked', 'safety'])) {
+      return const GeminiFailure(GeminiFailureKind.blocked);
+    }
+    return const GeminiFailure(GeminiFailureKind.unknown);
   }
 }

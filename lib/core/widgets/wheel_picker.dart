@@ -2,10 +2,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_palette.dart';
 
-/// iOS風のドラムロール（数字 + 単位）。
-///
+/// 数字 + 単位のドラムロール（整数）。
 /// 表示する数字は `firstValue + 行の番号 * step`。
-/// 目盛りを越えるたびに、軽い触覚を返す。
 class WheelPicker extends StatelessWidget {
   const WheelPicker({
     super.key,
@@ -18,7 +16,6 @@ class WheelPicker extends StatelessWidget {
     this.height = 150,
   });
 
-  /// 初期位置は、呼び出し側が `FixedExtentScrollController(initialItem: ...)` で決める
   final FixedExtentScrollController controller;
   final int itemCount;
   final String unit;
@@ -32,8 +29,41 @@ class WheelPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return TextWheelPicker(
+      controller: controller,
+      labels: [for (var i = 0; i < itemCount; i++) '${firstValue + i * step}'],
+      unit: unit,
+      onSelectedIndex: (index) => onSelected(firstValue + index * step),
+      height: height,
+    );
+  }
+}
+
+/// 好きな文字（「36.5」など）を並べるドラムロール。
+/// 目盛りを越えるたびに、軽い触覚を返す。
+class TextWheelPicker extends StatelessWidget {
+  const TextWheelPicker({
+    super.key,
+    required this.controller,
+    required this.labels,
+    required this.unit,
+    required this.onSelectedIndex,
+    this.height = 150,
+  });
+
+  final FixedExtentScrollController controller;
+  final List<String> labels;
+  final String unit;
+
+  /// 選ばれた行の番号
+  final ValueChanged<int> onSelectedIndex;
+
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
     final p = AppPalette.of(context);
-    final numberStyle = TextStyle(
+    final labelStyle = TextStyle(
       fontSize: 22,
       fontWeight: FontWeight.w500,
       color: p.textPrimary,
@@ -53,18 +83,15 @@ class WheelPicker extends StatelessWidget {
         ),
         onSelectedItemChanged: (index) {
           HapticFeedback.selectionClick();
-          onSelected(firstValue + index * step);
+          onSelectedIndex(index);
         },
         children: [
-          for (var i = 0; i < itemCount; i++)
+          for (final label in labels)
             Center(
               child: Text.rich(
                 TextSpan(
                   children: [
-                    TextSpan(
-                      text: '${firstValue + i * step}',
-                      style: numberStyle,
-                    ),
+                    TextSpan(text: label, style: labelStyle),
                     TextSpan(text: ' $unit', style: unitStyle),
                   ],
                 ),

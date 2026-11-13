@@ -4,29 +4,39 @@ import '../../../core/theme/app_palette.dart';
 import '../../../core/utils/time_format.dart';
 import '../../../core/widgets/inset_section.dart';
 import '../domain/care_record.dart';
+import 'record_type_style.dart';
 
-/// その日の記録一覧。タップすると削除の確認が出る。
+/// その日の記録一覧。タップすると「詳細を追加・変更」「削除」を選べる。
 class DayRecordList extends StatelessWidget {
   const DayRecordList({
     super.key,
     required this.records,
+    required this.onEditDetail,
     required this.onDelete,
   });
 
   final List<CareRecord> records;
+  final ValueChanged<CareRecord> onEditDetail;
   final ValueChanged<CareRecord> onDelete;
 
-  void _confirm(BuildContext context, CareRecord r) {
+  void _showActions(BuildContext context, CareRecord record) {
     showCupertinoModalPopup<void>(
       context: context,
       builder: (ctx) => CupertinoActionSheet(
-        title: Text('${hm(r.startedAt)} の${r.type.label}'),
+        title: Text('${hm(record.endedAt)} の${record.type.label}'),
         actions: [
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              onEditDetail(record);
+            },
+            child: const Text('詳細を追加・変更'),
+          ),
           CupertinoActionSheetAction(
             isDestructiveAction: true,
             onPressed: () {
               Navigator.of(ctx).pop();
-              onDelete(r);
+              onDelete(record);
             },
             child: const Text('この記録を削除'),
           ),
@@ -49,9 +59,9 @@ class DayRecordList extends StatelessWidget {
       header: 'この日の記録',
       margin: EdgeInsets.zero, // 親の ListView に余白があるため
       children: [
-        for (final r in sorted)
+        for (final record in sorted)
           InkWell(
-            onTap: () => _confirm(context, r),
+            onTap: () => _showActions(context, record),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Column(
@@ -59,22 +69,39 @@ class DayRecordList extends StatelessWidget {
                 children: [
                   Row(
                     children: [
+                      // 種別の色の点
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: record.type.color(p),
+                        ),
+                        child: const SizedBox.square(dimension: 8),
+                      ),
+                      const SizedBox(width: 10),
                       Text(
-                        '${hm(r.startedAt)}  ${r.type.label}',
+                        '${hm(record.startedAt)}  ${record.type.label}',
                         style: TextStyle(fontSize: 16, color: p.textPrimary),
                       ),
                       const Spacer(),
-                      Text(
-                        '${r.duration.inMinutes}分',
-                        style: TextStyle(fontSize: 15, color: p.textSecondary),
-                      ),
+                      // 時間を測った記録だけ、所要時間を出す
+                      if (!record.isInstant)
+                        Text(
+                          '${record.duration.inMinutes}分',
+                          style: TextStyle(
+                            fontSize: 15,
+                            color: p.textSecondary,
+                          ),
+                        ),
                     ],
                   ),
-                  if (r.detail.isNotEmpty) ...[
+                  if (record.detail.isNotEmpty) ...[
                     const SizedBox(height: 2),
-                    Text(
-                      r.detail,
-                      style: TextStyle(fontSize: 13, color: p.textSecondary),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 18),
+                      child: Text(
+                        record.detail,
+                        style: TextStyle(fontSize: 13, color: p.textSecondary),
+                      ),
                     ),
                   ],
                 ],

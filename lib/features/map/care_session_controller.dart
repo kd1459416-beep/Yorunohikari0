@@ -70,10 +70,12 @@ class CareSessionController extends ChangeNotifier {
   void _setStatus(CareStatus status) {
     _status = status;
     notifyListeners();
-    _presence.update({
-      'status': status.name,
-      'statusUpdatedAt': FieldValue.serverTimestamp(),
-    });
+    _presence.setStatus(status.name);
+
+    // _presence.update({
+    // 'status': status.name,
+    // 'statusUpdatedAt': FieldValue.serverTimestamp(),
+    // });
   }
 
   @override

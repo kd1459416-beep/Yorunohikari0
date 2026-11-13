@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
 import '../../../core/theme/app_palette.dart';
 import '../../../core/utils/time_format.dart';
+import '../../../core/widgets/elapsed_text.dart';
 import '../domain/care_record.dart';
+import 'record_type_style.dart';
 
-extension RecordTypeColor on RecordType {
-  Color color(AppPalette p) =>
-      this == RecordType.nursing ? p.nursing : p.sleeping;
-}
-
-/// 「前回の授乳」「前回の寝かしつけ」を左右に並べたカード。
+/// 「前回の授乳／寝かしつけ／おしっこ／うんち」を、2×2で並べたカード。
+/// どれも「2時間38分前」のように分単位まで表示する（オムツ替えの目安に）。
 class RecentSummary extends StatefulWidget {
   const RecentSummary({
     super.key,
@@ -24,11 +22,27 @@ class RecentSummary extends StatefulWidget {
 }
 
 class _RecentSummaryState extends State<RecentSummary> {
+  static const _rows = [
+    [RecordType.nursing, RecordType.sleep],
+    [RecordType.pee, RecordType.poop],
+  ];
+
   // 「〇分前」を最新に保つため、1分ごとに現在時刻を流す
   late final Stream<DateTime> _clock = Stream.periodic(
     const Duration(minutes: 1),
     (_) => DateTime.now(),
   );
+
+  Widget _cell(RecordType type, DateTime now) {
+    return _SummaryCell(
+      type: type,
+      last: widget.recent.where((r) => r.type == type).firstOrNull,
+      dayTotal: widget.dayRecords
+          .where((r) => r.type == type)
+          .fold(0.0, (sum, r) => sum + type.valueOf(r)),
+      now: now,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -44,31 +58,28 @@ class _RecentSummaryState extends State<RecentSummary> {
         initialData: DateTime.now(),
         builder: (context, snapshot) {
           final now = snapshot.requireData;
-          return IntrinsicHeight(
-            child: Row(
-              children: [
-                for (final (i, type) in RecordType.values.indexed) ...[
-                  if (i > 0)
-                    VerticalDivider(
-                      width: 0.5,
-                      thickness: 0.5,
-                      color: p.hairline,
-                    ),
-                  Expanded(
-                    child: _SummaryCell(
-                      type: type,
-                      last: widget.recent
-                          .where((r) => r.type == type)
-                          .firstOrNull,
-                      dayTotal: widget.dayRecords
-                          .where((r) => r.type == type)
-                          .fold(0.0, (sum, r) => sum + type.valueOf(r)),
-                      now: now,
-                    ),
+          return Column(
+            children: [
+              for (final (i, row) in _rows.indexed) ...[
+                if (i > 0)
+                  Divider(height: 0.5, thickness: 0.5, color: p.hairline),
+                IntrinsicHeight(
+                  child: Row(
+                    children: [
+                      for (final (j, type) in row.indexed) ...[
+                        if (j > 0)
+                          VerticalDivider(
+                            width: 0.5,
+                            thickness: 0.5,
+                            color: p.hairline,
+                          ),
+                        Expanded(child: _cell(type, now)),
+                      ],
+                    ],
                   ),
-                ],
+                ),
               ],
-            ),
+            ],
           );
         },
       ),
@@ -89,8 +100,9 @@ class _SummaryCell extends StatelessWidget {
   final double dayTotal;
   final DateTime now;
 
-  /// 経過時間の文字の大きさ。夜間や片手でも読めるよう大きくしている
-  static const _elapsedFontSize = 32.0;
+  /// 時刻の表示。時間を測っていない記録（ワンタップ）は、時刻ひとつだけ
+  String _timeText(CareRecord r) =>
+      r.isInstant ? hm(r.endedAt) : '${hm(r.startedAt)}–${hm(r.endedAt)}';
 
   @override
   Widget build(BuildContext context) {
@@ -98,40 +110,34 @@ class _SummaryCell extends StatelessWidget {
     final record = last;
 
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '前回の${type.label}',
-            style: TextStyle(fontSize: 13, color: p.textSecondary),
+          Row(
+            children: [
+              type.icon(type.color(p), size: 16),
+              const SizedBox(width: 6),
+              Text(
+                '前回の${type.label}',
+                style: TextStyle(fontSize: 13, color: p.textSecondary),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
 
-          // 一番目立たせる: 前回からの経過時間
+          // 一番目立たせる: 前回からの経過時間（2時間38分前）
           if (record == null)
             Text('記録なし', style: TextStyle(fontSize: 20, color: p.textSecondary))
           else
-            FittedBox(
-              fit: BoxFit.scaleDown, // 幅が足りないときだけ縮める
-              alignment: Alignment.centerLeft,
-              child: Text(
-                timeAgo(record.endedAt, now: now),
-                style: TextStyle(
-                  fontSize: _elapsedFontSize,
-                  fontWeight: FontWeight.w700,
-                  height: 1.1,
-                  color: type.color(p),
-                ),
-              ),
+            ElapsedText(
+              elapsed: ElapsedTime.since(record.endedAt, now: now),
+              color: type.color(p),
             ),
 
           const SizedBox(height: 8),
-          // 補助情報: 時刻の範囲と、その日の合計
           Text(
-            record == null
-                ? ' '
-                : '${hm(record.startedAt)}–${hm(record.endedAt)}',
+            record == null ? ' ' : _timeText(record),
             style: TextStyle(fontSize: 14, color: p.textSecondary),
           ),
           const SizedBox(height: 4),

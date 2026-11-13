@@ -10,17 +10,21 @@ class RecordLineChart extends StatelessWidget {
     required this.values,
     required this.color,
     required this.unit,
+    this.minTop = 1,
+    this.yInterval,
   }) : assert(values.length == 24);
 
   final List<double> values;
   final Color color;
   final String unit;
+  final double minTop;
+  final double? yInterval;
 
   @override
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
     final labelStyle = TextStyle(fontSize: 10, color: p.textSecondary);
-    final maxY = max(values.reduce(max) * 1.25, 1.0);
+    final maxY = max(values.reduce(max) * 1.25, minTop);
 
     return LineChart(
       LineChartData(
@@ -51,6 +55,7 @@ class RecordLineChart extends StatelessWidget {
             sideTitles: SideTitles(
               showTitles: true,
               reservedSize: 40,
+              interval: yInterval,
               maxIncluded: false,
               getTitlesWidget: (v, _) =>
                   Text('${v.round()}$unit', style: labelStyle),

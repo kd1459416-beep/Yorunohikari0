@@ -36,13 +36,13 @@ class AppPalette extends ThemeExtension<AppPalette> {
   /// ライト。[warmth] 0 = やわらかい白 〜 1 = 濃いクリーム（純白は使わない）
   factory AppPalette.light({double warmth = 0.5}) => AppPalette(
     background: Color.lerp(
-      const Color(0xFFF1EFEA),
-      const Color(0xFFE9DEC6),
+      const Color.fromARGB(255, 220, 217, 211),
+      const Color.fromARGB(255, 212, 198, 166),
       warmth,
     )!,
     surface: Color.lerp(
       const Color(0xFFF9F7F2),
-      const Color(0xFFF3EAD5),
+      const Color.fromARGB(255, 244, 232, 204),
       warmth,
     )!,
     hairline: const Color(0x1F3A2E1A),
