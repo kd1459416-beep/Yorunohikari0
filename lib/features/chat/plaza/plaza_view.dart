@@ -22,14 +22,10 @@ class _PlazaViewState extends State<PlazaView> {
   final _repository = PlazaRepository();
 
   PostCategory? _filter; // null = すべて
-  late Stream<List<Post>> _posts = _repository.watchPosts();
+  late final Stream<List<Post>> _posts = _repository.watchPosts();
 
-  void _selectFilter(PostCategory? category) {
-    setState(() {
-      _filter = category;
-      _posts = _repository.watchPosts(category: category);
-    });
-  }
+  void _selectFilter(PostCategory? category) =>
+      setState(() => _filter = category);
 
   Future<void> _compose() async {
     final draft = await showPostComposer(
@@ -90,6 +86,7 @@ class _PlazaViewState extends State<PlazaView> {
             Expanded(
               child: _PostFeed(
                 posts: _posts,
+                category: _filter,
                 myUid: _repository.uid,
                 onOpen: _openDetail,
                 onDelete: _delete,
@@ -107,16 +104,18 @@ class _PlazaViewState extends State<PlazaView> {
   }
 }
 
-/// 投稿の一覧部分
+/// 投稿の一覧部分。[category] が null でなければ、そのカテゴリだけを出す
 class _PostFeed extends StatelessWidget {
   const _PostFeed({
     required this.posts,
+    required this.category,
     required this.myUid,
     required this.onOpen,
     required this.onDelete,
   });
 
   final Stream<List<Post>> posts;
+  final PostCategory? category;
   final String? myUid;
   final ValueChanged<Post> onOpen;
   final ValueChanged<Post> onDelete;
@@ -128,7 +127,6 @@ class _PostFeed extends StatelessWidget {
       stream: posts,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          // 初回は複合インデックス未作成のエラーが出ることがある（ログのURLから作成）
           debugPrint('投稿の取得エラー: ${snapshot.error}');
           return Center(
             child: Text('読み込めませんでした', style: TextStyle(color: p.textSecondary)),
@@ -137,7 +135,9 @@ class _PostFeed extends StatelessWidget {
         if (!snapshot.hasData) {
           return const Center(child: CupertinoActivityIndicator());
         }
-        final list = snapshot.data!;
+        final list = snapshot.data!
+            .where((post) => category == null || post.category == category)
+            .toList();
         if (list.isEmpty) {
           return Center(
             child: Text(

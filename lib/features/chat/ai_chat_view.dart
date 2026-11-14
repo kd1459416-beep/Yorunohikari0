@@ -1,6 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/widgets/message_input_bar.dart';
 import 'ai_chat_repository.dart';
@@ -17,7 +15,10 @@ class AiChatView extends StatefulWidget {
 
 class _AiChatViewState extends State<AiChatView> {
   /// 回答の書き込みを間引く間隔（毎回書くと通信が多すぎるため）
-  static const _writeInterval = Duration(milliseconds: 400);
+  static const _writeInterval = Duration(milliseconds: 600);
+
+  /// 「…」のまま残ったメッセージを、失敗として見せるまでの時間
+  static const _staleAfter = Duration(minutes: 2);
 
   final _repository = AiChatRepository();
   final _gemini = GeminiService();
@@ -32,7 +33,7 @@ class _AiChatViewState extends State<AiChatView> {
     super.dispose();
   }
 
-  /// 送信 → 履歴を取る → 質問を保存 → 空の回答を作る → 届いた分だけ書き換える
+  /// 送信 → 履歴を取る → 質問と「…」をすぐ画面に出す → 届いた分だけ書き換える
   Future<void> _send() async {
     final question = _input.text.trim();
     if (question.isEmpty || _isAnswering) return;
@@ -41,8 +42,8 @@ class _AiChatViewState extends State<AiChatView> {
     setState(() => _isAnswering = true);
     try {
       final history = await _repository.loadRecentTurns(); // 今回の質問を含めない
-      await _repository.addUserMessage(question);
-      final reply = await _repository.addAiPlaceholder();
+      _repository.addUserMessage(question);
+      final reply = _repository.addAiPlaceholder();
       await _streamAnswer(reply, question, history);
     } catch (e) {
       debugPrint('AI相談の送信エラー: $e');
@@ -53,7 +54,7 @@ class _AiChatViewState extends State<AiChatView> {
   }
 
   Future<void> _streamAnswer(
-    DocumentReference<Map<String, dynamic>>? reply,
+    AiReply? reply,
     String question,
     List<AiTurn> history,
   ) async {
@@ -64,15 +65,15 @@ class _AiChatViewState extends State<AiChatView> {
         latest = text;
         if (DateTime.now().difference(lastWrite) > _writeInterval) {
           lastWrite = DateTime.now();
-          await _repository.writeAiText(reply, text);
+          reply?.writeText(text);
         }
       }
-      await _repository.writeAiText(reply, latest); // 最後の分まで必ず書く
+      reply?.writeText(latest); // 最後の分まで必ず書く
     } on GeminiFailure catch (failure) {
-      await _writeFailure(reply, latest, failure.userMessage);
+      _writeFailure(reply, latest, failure.userMessage);
     } catch (e) {
       debugPrint('回答の取得エラー: $e');
-      await _writeFailure(
+      _writeFailure(
         reply,
         latest,
         const GeminiFailure(GeminiFailureKind.unknown).userMessage,
@@ -81,15 +82,12 @@ class _AiChatViewState extends State<AiChatView> {
   }
 
   /// 途中まで届いた回答があれば残し、なければお知らせを書く
-  Future<void> _writeFailure(
-    DocumentReference<Map<String, dynamic>>? reply,
-    String partial,
-    String message,
-  ) {
+  void _writeFailure(AiReply? reply, String partial, String message) {
     if (partial.isNotEmpty) {
-      return _repository.writeAiText(reply, '$partial\n\n（途中で通信が途切れました）');
+      reply?.writeText('$partial\n\n（途中で通信が途切れました）');
+    } else {
+      reply?.writeError(message);
     }
-    return _repository.writeAiError(reply, message);
   }
 
   void _showError() {
@@ -160,12 +158,16 @@ class _AiChatViewState extends State<AiChatView> {
                 itemCount: messages.length,
                 itemBuilder: (_, i) {
                   final m = messages[i];
+                  // 「…」のまま長く残ったものは、失敗として見せる
+                  final isStale =
+                      m.isPending &&
+                      DateTime.now().difference(m.sentAt) > _staleAfter;
                   return AiMessageBubble(
                     name: m.isAi ? 'AI' : '自分',
-                    text: m.text,
+                    text: isStale ? '回答できませんでした。もう一度送ってください。' : m.text,
                     time: m.sentAt,
                     isMine: !m.isAi,
-                    isError: m.isError,
+                    isError: m.isError || isStale,
                   );
                 },
               );

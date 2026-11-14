@@ -16,6 +16,7 @@ enum GeminiFailureKind {
   missingKey,
   invalidKey,
   overloaded,
+  timeout,
   quota,
   blocked,
   network,
@@ -32,13 +33,14 @@ class GeminiFailure implements Exception {
       'APIキーが設定されていません。.env の GEMINI_API_KEY を確認してください。',
     GeminiFailureKind.invalidKey => 'APIキーが正しくないか、利用が許可されていません。',
     GeminiFailureKind.overloaded => 'いま混み合っていて、回答できませんでした。少し待って、もう一度送ってください。',
+    GeminiFailureKind.timeout => '回答に時間がかかっています。少し待って、もう一度送ってください。',
     GeminiFailureKind.quota => '利用回数の上限に達しました。しばらくしてからお試しください。',
     GeminiFailureKind.blocked => '内容の都合で回答を作れませんでした。言い方を変えて送ってみてください。',
     GeminiFailureKind.network => '通信できませんでした。接続を確認して、もう一度送ってください。',
     GeminiFailureKind.unknown => '回答を取得できませんでした。もう一度お試しください。',
   };
 
-  /// 待ってから同じモデルで、もう一度試す価値があるか
+  /// 少し待ってから、同じモデルでもう一度試す価値があるか
   bool get canRetry =>
       kind == GeminiFailureKind.overloaded || kind == GeminiFailureKind.network;
 
@@ -51,11 +53,15 @@ class GeminiFailure implements Exception {
 
 /// Gemini API との通信だけを担当する。画面や保存の処理は知らない。
 class GeminiService {
-  /// 先頭から順に試す。混雑などで失敗したら、次のモデルに切り替える
-  static const _models = ['gemini-3.8-flash', 'gemini-3.5-flash-lite'];
+  /// 先頭から順に試す。速くて混みにくい lite を先に使い、だめなら 3.8 に切り替える
+  static const _models = ['gemini-3.5-flash-lite', 'gemini-3.8-flash'];
 
-  /// 同じモデルでの再試行回数（待ち時間は 1秒 → 2秒）
-  static const _maxRetries = 2;
+  /// 同じモデルでの再試行は、混雑のときだけ1回
+  static const _maxRetries = 1;
+  static const _retryDelay = Duration(seconds: 1);
+
+  /// 次の文字が届くまでの待ち時間の上限。超えたら、待たずに次のモデルへ切り替える
+  static const _idleTimeout = Duration(seconds: 15);
 
   static const _persona = '''
 夜間の授乳や寝かしつけで悩む保護者の相談に乗ってください。
@@ -96,10 +102,10 @@ class GeminiService {
           if (emittedAnything || failure.isFatal) throw failure;
 
           if (failure.canRetry && attempt < _maxRetries) {
-            await Future<void>.delayed(Duration(seconds: attempt + 1));
+            await Future<void>.delayed(_retryDelay);
             continue; // 同じモデルで、もう一度
           }
-          break; // 次のモデルへ
+          break; // 次のモデルへ（時間切れも、ここから次のモデルへ）
         }
       }
     }
@@ -119,8 +125,13 @@ class GeminiService {
     );
     final chat = model.startChat(history: _toContents(history));
 
+    // 次の文字が _idleTimeout 以内に届かなければ、TimeoutException になる
+    final responses = chat
+        .sendMessageStream(Content.text(message))
+        .timeout(_idleTimeout);
+
     var text = '';
-    await for (final chunk in chat.sendMessageStream(Content.text(message))) {
+    await for (final chunk in responses) {
       final piece = chunk.text;
       if (piece == null || piece.isEmpty) continue;
       text += piece;
@@ -149,8 +160,12 @@ class GeminiService {
   /// 例外の文面から、失敗の種類を見分ける
   static GeminiFailure _classify(Object error) {
     if (error is GeminiFailure) return error;
-    if (error is InvalidApiKey)
+    if (error is TimeoutException) {
+      return const GeminiFailure(GeminiFailureKind.timeout);
+    }
+    if (error is InvalidApiKey) {
       return const GeminiFailure(GeminiFailureKind.invalidKey);
+    }
 
     final text = error.toString().toLowerCase();
     bool has(List<String> words) => words.any(text.contains);

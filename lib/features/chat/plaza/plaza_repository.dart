@@ -10,7 +10,7 @@ class PlazaRepository {
 
   static const maxPostLength = 300;
   static const maxCommentLength = 200;
-  static const _feedLimit = 50;
+  static const _feedLimit = 100;
 
   final FirebaseFirestore _db;
   final FirebaseAuth _auth;
@@ -20,24 +20,16 @@ class PlazaRepository {
   CollectionReference<Map<String, dynamic>> get _posts =>
       _db.collection('posts');
 
-  /// 新しい順のタイムライン。[category] を指定すると、そのカテゴリだけ
-  /// （カテゴリ + 日時の並び替えには、複合インデックスが必要）
-  Stream<List<Post>> watchPosts({PostCategory? category}) {
-    Query<Map<String, dynamic>> query = _posts;
-    if (category != null) {
-      query = query.where('category', isEqualTo: category.name);
-    }
-    return query
-        .orderBy('createdAt', descending: true)
-        .limit(_feedLimit)
-        .snapshots()
-        .map(
-          (s) => s.docs
-              .map((d) => Post.tryParse(d.id, d.data()))
-              .nonNulls
-              .toList(),
-        );
-  }
+  /// 新しい順のタイムライン。カテゴリでの絞り込みは、画面側で行う
+  /// （サーバー側で絞ると複合インデックスが必要で、未作成だと読み込めないため）
+  Stream<List<Post>> watchPosts() => _posts
+      .orderBy('createdAt', descending: true)
+      .limit(_feedLimit)
+      .snapshots()
+      .map(
+        (s) =>
+            s.docs.map((d) => Post.tryParse(d.id, d.data())).nonNulls.toList(),
+      );
 
   Future<void> addPost({
     required String text,
