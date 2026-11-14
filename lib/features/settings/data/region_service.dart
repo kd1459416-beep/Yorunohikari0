@@ -9,7 +9,9 @@ class RegionService {
   /// 住所から座標を引く。失敗したら都道府県の代表座標を使う。
   Future<LatLng> resolve(String prefecture, String city) async {
     try {
-      final results = await locationFromAddress('$prefecture $city'.trim());
+      final results = await locationFromAddress(
+        '$prefecture $city'.trim(),
+      ).timeout(const Duration(seconds: 5)); // 超えたら、下の都道府県の座標を使う);
       if (results.isNotEmpty) {
         return LatLng(results.first.latitude, results.first.longitude);
       }

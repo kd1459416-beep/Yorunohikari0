@@ -5,6 +5,7 @@ import '../../../core/theme/app_palette.dart';
 import '../../../core/widgets/inset_section.dart';
 import '../data/region_service.dart';
 import '../data/user_repository.dart';
+import '../../map/data/presence_repository.dart';
 
 class RegionScreen extends StatefulWidget {
   const RegionScreen({super.key});
@@ -17,6 +18,7 @@ class _RegionScreenState extends State<RegionScreen> {
   final _users = UserRepository();
   final _region = RegionService();
   final _cityController = TextEditingController();
+  final _presence = PresenceRepository();
   String _prefecture = '東京都';
   bool _saving = false;
 
@@ -40,16 +42,22 @@ class _RegionScreenState extends State<RegionScreen> {
 
   Future<void> _save() async {
     setState(() => _saving = true);
-    final city = _cityController.text.trim();
-    final base = await _region.resolve(_prefecture, city);
-    final shown = _region.blur(base); // 保存するのはずらした座標のみ
-    await _users.update({
-      'prefecture': _prefecture,
-      'city': city,
-      'latitude': shown.latitude,
-      'longitude': shown.longitude,
-    });
-    if (mounted) Navigator.of(context).pop();
+    try {
+      final city = _cityController.text.trim();
+      final base = await _region.resolve(_prefecture, city);
+      final shown = _region.blur(base); // 保存するのはずらした座標のみ
+      await _users.update({
+        'prefecture': _prefecture,
+        'city': city,
+        'latitude': shown.latitude,
+        'longitude': shown.longitude,
+      });
+      await _presence.moveTo(shown); // いま灯っている灯りも、新しい場所へ
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      debugPrint('地域の保存エラー: $e');
+      if (mounted) setState(() => _saving = false); // 失敗しても、保存ボタンを押せる状態に戻す
+    }
   }
 
   @override

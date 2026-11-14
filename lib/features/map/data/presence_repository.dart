@@ -63,36 +63,35 @@ class PresenceRepository {
 
     if (status != 'none') {
       try {
-        final current = (await _col.doc(id).get()).data();
-        final hasPosition =
-            current?['latitude'] != null && current?['longitude'] != null;
-        if (!hasPosition) {
-          final position = await _fallbackPosition(id);
-          data['latitude'] = position.latitude;
-          data['longitude'] = position.longitude;
-        }
+        final position = await _registeredPosition(id);
+        data['latitude'] = position.latitude;
+        data['longitude'] = position.longitude;
       } catch (e) {
-        debugPrint('位置の補完に失敗（状態だけ書き込みます）: $e');
+        debugPrint('位置の取得に失敗（状態だけ書き込みます）: $e');
       }
     }
     await update(data);
   }
 
-  /// 位置が未登録のときの代わりの座標（少しずらす）。
-  /// 以前保存した座標 → 都道府県の代表座標 → 東京 の順に使う。
-  Future<LatLng> _fallbackPosition(String uid) async {
-    final regions = RegionService();
-    try {
-      final user = (await _db.collection('users').doc(uid).get()).data();
-      final lat = (user?['latitude'] as num?)?.toDouble();
-      final lng = (user?['longitude'] as num?)?.toDouble();
-      if (lat != null && lng != null) return regions.blur(LatLng(lat, lng));
+  /// 灯りの位置。「地域」で保存した座標 → 都道府県の代表座標 → 東京 の順に使う。
+  Future<LatLng> _registeredPosition(String uid) async {
+    final user = (await _db.collection('users').doc(uid).get()).data();
+    final lat = (user?['latitude'] as num?)?.toDouble();
+    final lng = (user?['longitude'] as num?)?.toDouble();
 
-      final prefecture = user?['prefecture'] as String?;
-      return regions.blur(prefectureCoordinates[prefecture] ?? _tokyo);
-    } catch (_) {
-      return regions.blur(_tokyo);
-    }
+    // 地域の保存時にすでにずらしてあるので、ここではそのまま使う
+    if (lat != null && lng != null) return LatLng(lat, lng);
+
+    final prefecture = user?['prefecture'] as String?;
+    return RegionService().blur(prefectureCoordinates[prefecture] ?? _tokyo);
+  }
+
+  /// 地域を変えたとき、いま灯っている自分の灯りも新しい場所へ動かす
+  Future<void> moveTo(LatLng position) {
+    return update({
+      'latitude': position.latitude,
+      'longitude': position.longitude,
+    });
   }
 
   // ---------- エール ----------

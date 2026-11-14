@@ -1,9 +1,8 @@
 import 'dart:async';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'data/presence_repository.dart';
-import '../records/data/record_repository.dart';
-import '../records/domain/care_record.dart';
+import '../records/record_store.dart';
+import '../records/record_models.dart';
 
 enum CareStatus {
   none,
@@ -71,11 +70,6 @@ class CareSessionController extends ChangeNotifier {
     _status = status;
     notifyListeners();
     _presence.setStatus(status.name);
-
-    // _presence.update({
-    // 'status': status.name,
-    // 'statusUpdatedAt': FieldValue.serverTimestamp(),
-    // });
   }
 
   @override
