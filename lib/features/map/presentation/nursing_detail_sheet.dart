@@ -5,10 +5,13 @@ import '../../../core/theme/app_palette.dart';
 import '../../../core/widgets/labeled_segmented.dart';
 
 /// 保存したら詳細文字列を返す。閉じたら null（計測は続く）。
-Future<String?> showNursingDetailSheet(BuildContext context) {
+Future<String?> showNursingDetailSheet(
+  BuildContext context, {
+  bool startWithFormula = false,
+}) {
   return showCupertinoModalPopup<String>(
     context: context,
-    builder: (_) => const _NursingDetailSheet(),
+    builder: (_) => _NursingDetailSheet(startWithFormula: startWithFormula),
   );
 }
 
@@ -38,14 +41,17 @@ int _indexOf(int ml) =>
     ((ml - _mlMin) / _mlStep).round().clamp(0, _mlCount - 1);
 
 class _NursingDetailSheet extends StatefulWidget {
-  const _NursingDetailSheet();
+  const _NursingDetailSheet({required this.startWithFormula});
+  final bool startWithFormula;
 
   @override
   State<_NursingDetailSheet> createState() => _NursingDetailSheetState();
 }
 
 class _NursingDetailSheetState extends State<_NursingDetailSheet> {
-  _FeedType _type = _FeedType.breast;
+  late _FeedType _type = widget.startWithFormula
+      ? _FeedType.formula
+      : _FeedType.breast;
   String _side = _sides.first;
   int _ml = _mlInitial;
   String? _memo;

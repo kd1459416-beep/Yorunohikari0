@@ -53,3 +53,12 @@ class ElapsedTime {
 
 String timeAgo(DateTime time, {DateTime? now}) =>
     ElapsedTime.since(time, now: now).text;
+
+/// 時間の長さ。例: 「1時間12分」「45分」「2時間」
+String formatSpan(Duration d) {
+  final hours = d.inHours;
+  final minutes = d.inMinutes % 60;
+  if (hours > 0 && minutes > 0) return '$hours時間$minutes分';
+  if (hours > 0) return '$hours時間';
+  return '$minutes分';
+}

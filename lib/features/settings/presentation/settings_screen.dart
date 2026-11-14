@@ -10,6 +10,7 @@ import 'credits_screen.dart';
 import 'profile_edit_screen.dart';
 import 'region_screen.dart';
 import 'support_section.dart';
+import '../../reminder/reminder_ui.dart';
 
 Future<void> _push(BuildContext context, Widget page) =>
     Navigator.of(context).push(CupertinoPageRoute<void>(builder: (_) => page));
@@ -68,6 +69,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             header: '外観',
             children: [AppearanceTile(), ToneTile()],
           ),
+          const InsetSection(header: '通知', children: [ReminderSettingsTile()]),
           const SupportSection(),
           InsetSection(
             children: [

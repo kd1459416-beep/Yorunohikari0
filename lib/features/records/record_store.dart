@@ -1,7 +1,12 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
-import '../domain/care_record.dart';
+import 'record_models.dart';
+
+// ============================================================
+//  1. Firestore の読み書き
+// ============================================================
 
 class RecordRepository {
   RecordRepository({FirebaseFirestore? firestore, FirebaseAuth? auth})
@@ -47,7 +52,7 @@ class RecordRepository {
         const Stream.empty();
   }
 
-  /// 直近の記録（新しい順）。「前回の授乳／おしっこ…」用
+  /// 直近の記録（新しい順）。「前回の〇〇」と、授乳のお知らせに使う
   Stream<List<CareRecord>> watchRecent() =>
       _col
           ?.orderBy('timestamp', descending: true)
@@ -74,7 +79,76 @@ class RecordRepository {
     await _col?.doc(id).update(fields);
   }
 
+  /// 時刻と所要時間だけを書き換える（押し忘れの修正用）
+  Future<void> updateTiming(
+    String id, {
+    required DateTime endedAt,
+    required Duration duration,
+  }) async {
+    await _col?.doc(id).update({
+      'timestamp': Timestamp.fromDate(endedAt),
+      'duration': CareRecord.encodeDuration(duration),
+    });
+  }
+
   Future<void> delete(String id) async {
     await _col?.doc(id).delete();
+  }
+}
+
+// ============================================================
+//  2. ワンタップ記録の状態
+// ============================================================
+
+/// ワンタップ記録の状態を持つ。
+/// 直前に保存した記録を一定時間だけ覚えておき、「詳細を足す」「取り消す」を可能にする。
+class QuickRecordController extends ChangeNotifier {
+  QuickRecordController(this._repository);
+
+  static const _bannerDuration = Duration(seconds: 8);
+
+  final RecordRepository _repository;
+  CareRecord? _last;
+  Timer? _hideTimer;
+
+  /// 直前に保存した記録（なければ null）。この間だけお知らせを出す
+  CareRecord? get last => _last;
+
+  /// 「いま」の記録を1回で保存する
+  Future<void> record(RecordType type) async {
+    final now = DateTime.now();
+    final id = await _repository.add(CareRecord(type: type, endedAt: now));
+    if (id == null) return;
+
+    _last = CareRecord(id: id, type: type, endedAt: now);
+    _hideTimer?.cancel();
+    _hideTimer = Timer(_bannerDuration, dismiss);
+    notifyListeners();
+  }
+
+  /// 直前の記録を取り消す
+  Future<void> undo() async {
+    final id = _last?.id;
+    dismiss();
+    if (id == null) return;
+    try {
+      await _repository.delete(id);
+    } catch (e) {
+      debugPrint('記録の取り消しエラー: $e');
+    }
+  }
+
+  /// お知らせだけを閉じる（記録は残す）
+  void dismiss() {
+    _hideTimer?.cancel();
+    if (_last == null) return;
+    _last = null;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    super.dispose();
   }
 }

@@ -5,7 +5,7 @@ import '../bgm/bgm_screen.dart';
 import '../chat/chat_screen.dart';
 import '../map/care_session_controller.dart';
 import '../map/presentation/map_screen.dart';
-import '../records/presentation/records_screen.dart';
+import '../records/records_screen.dart';
 import '../settings/presentation/settings_screen.dart';
 import '../bgm/bgm_controller.dart';
 
