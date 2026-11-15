@@ -87,6 +87,9 @@ class CareRecord {
       type == RecordType.nursing &&
       (detail.startsWith('ミルク') || detail.startsWith('混合'));
 
+  /// 母乳・搾母乳など、ミルク以外の授乳
+  bool get isBreast => type == RecordType.nursing && !isMilk;
+
   /// 保存する時間の形（"05:30"）。既存の記録と同じ
   static String encodeDuration(Duration d) =>
       '${two(d.inMinutes)}:${two(d.inSeconds % 60)}';
@@ -132,11 +135,32 @@ class CareRecord {
 }
 
 extension RecordAggregation on Iterable<CareRecord> {
-  /// 開始時刻の「時」ごとに値を合計した24要素のリスト
-  List<double> hourly(double Function(CareRecord) valueOf) {
+  /// 開始時刻の「時」ごとの合計（0〜23時の24要素）。[valueOf] は1件ぶんの値（回数なら 1）
+  List<double> hourlyTotals(double Function(CareRecord) valueOf) {
     final buckets = List.filled(24, 0.0);
     for (final r in this) {
       buckets[r.startedAt.hour] += valueOf(r);
+    }
+    return buckets;
+  }
+
+  /// 今日を含む直近 [days] 日の、日ごとの合計（古い日 → 今日の順）
+  List<double> dailyTotals(
+    double Function(CareRecord) valueOf, {
+    required DateTime today,
+    int days = 7,
+  }) {
+    // 夏時間などの影響を受けないよう、UTC の日付どうしで日数を数える
+    final first = DateTime.utc(today.year, today.month, today.day - (days - 1));
+    final buckets = List.filled(days, 0.0);
+    for (final r in this) {
+      final d = r.startedAt;
+      final index = DateTime.utc(
+        d.year,
+        d.month,
+        d.day,
+      ).difference(first).inDays;
+      if (index >= 0 && index < days) buckets[index] += valueOf(r);
     }
     return buckets;
   }
@@ -145,10 +169,10 @@ extension RecordAggregation on Iterable<CareRecord> {
 // ============================================================
 //  2. カテゴリ（記録タブのメニュー）
 // ============================================================
-
-/// 記録タブの4つのメニュー。どの記録がどのカテゴリに入るかを、ここで決める。
+/// 記録タブの5つのメニュー。どの記録がどのカテゴリに入るかを、ここで決める。
 enum RecordCategory {
-  feedingSleep('授乳・ねんね', '前回からの時間・ふり返り・押し忘れの追加'),
+  feeding('授乳・ミルク', '前回からの時間・ふり返り'),
+  sleep('ねんね', '前回からの時間・ふり返り'),
   excretion('排泄', 'おしっこ・うんち'),
   meal('食事', '離乳食・ミルク・おやつ'),
   care('体調・ケア', '体温・お風呂・病院・お薬');
@@ -160,9 +184,10 @@ enum RecordCategory {
 
   /// この記録が、このカテゴリのページに載るか
   bool includes(CareRecord r) => switch (this) {
-    feedingSleep => r.type == RecordType.nursing || r.type == RecordType.sleep,
+    feeding => r.type == RecordType.nursing, // 母乳・ミルク・搾母乳
+    sleep => r.type == RecordType.sleep,
     excretion => r.type == RecordType.pee || r.type == RecordType.poop,
-    // ミルク（哺乳瓶の授乳）は、授乳・ねんねと食事の両方に出る
+    // ミルク（哺乳瓶の授乳）は、授乳・ミルクと食事の両方に出る
     meal =>
       r.type == RecordType.babyFood || r.type == RecordType.snack || r.isMilk,
     care =>
@@ -176,12 +201,16 @@ enum RecordCategory {
 //  3. その日の回数・量（画面に依存しない関数）
 // ============================================================
 
-/// 「ラベル + 値」の1組
+/// 「ラベル + 値」の1組。[type] を渡すと、数字をその種別の色にする
 class StatItem {
-  const StatItem(this.label, this.value);
+  const StatItem(this.label, this.value, {this.type, this.breast = false});
 
   final String label;
   final String value;
+  final RecordType? type;
+
+  /// 母乳（ピンク）の数字にするか
+  final bool breast;
 }
 
 /// その日の、カテゴリごとの回数・量。[records] は、そのカテゴリの記録だけを渡す。
@@ -191,13 +220,21 @@ List<StatItem> categoryStats(
 ) {
   int count(bool Function(CareRecord) test) => records.where(test).length;
   int milkMl() =>
-      records.where((r) => r.isMilk).fold(0, (sum, r) => sum + r.amountMl);
+      records.where((r) => r.isMilk).fold(0, (total, r) => total + r.amountMl);
 
   return switch (category) {
-    RecordCategory.feedingSleep => [
-      StatItem('授乳', '${count((r) => r.type == RecordType.nursing)}回'),
+    RecordCategory.feeding => [
+      StatItem(
+        '授乳',
+        '${count((r) => r.isBreast)}回',
+        type: RecordType.nursing,
+        breast: true,
+      ),
+      StatItem('ミルク', '${milkMl()}ml', type: RecordType.nursing),
+    ],
+    RecordCategory.sleep => [
       StatItem('ねんね', '${count((r) => r.type == RecordType.sleep)}回'),
-      StatItem('ミルク', '${milkMl()}ml'),
+      StatItem('合計', _totalSleep(records)),
     ],
     RecordCategory.excretion => [
       StatItem('おしっこ', '${count((r) => r.type == RecordType.pee)}回'),
@@ -214,6 +251,14 @@ List<StatItem> categoryStats(
       StatItem('病院', '${count((r) => r.type == RecordType.hospital)}回'),
     ],
   };
+}
+
+/// その日の合計睡眠時間（例: 「2時間30分」）
+String _totalSleep(List<CareRecord> records) {
+  final total = records
+      .where((r) => r.type == RecordType.sleep)
+      .fold(Duration.zero, (acc, r) => acc + r.duration);
+  return total == Duration.zero ? '0分' : formatSpan(total);
 }
 
 String _maxTemperature(List<CareRecord> records) {

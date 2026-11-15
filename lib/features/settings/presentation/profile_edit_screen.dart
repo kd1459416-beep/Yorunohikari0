@@ -200,7 +200,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           if (months != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(32, 0, 32, 16),
-              child: Text('月齢 ${months}か月', style: caption),
+              child: Text('月齢 $monthsか月', style: caption),
             ),
           InsetSection(
             header: 'あなた',

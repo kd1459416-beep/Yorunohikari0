@@ -15,7 +15,7 @@ class RecordRepository {
 
   /// 「前回の〇〇」を探すために読む件数。おしっこ・うんちが増えても、
   /// 授乳の「前回」が埋もれないよう、多めに取る
-  static const _recentLimit = 200;
+  static const _recentLimit = 500;
 
   final FirebaseFirestore _db;
   final FirebaseAuth _auth;

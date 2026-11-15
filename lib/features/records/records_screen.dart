@@ -2,8 +2,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/utils/time_format.dart';
-import '../../core/widgets/inset_section.dart';
 import '../map/presentation/nursing_detail_sheet.dart';
+import '../reminder/reminder_service.dart';
 import '../reminder/reminder_ui.dart';
 import 'record_models.dart';
 import 'record_sheets.dart';
@@ -39,7 +39,7 @@ class _RecordsScreenState extends State<RecordsScreen>
     vsync: this,
   );
 
-  // 画面の一番上で1回だけ取得して、4つのページに渡す
+  // 画面の一番上で1回だけ取得して、各ページに渡す
   late final Stream<List<CareRecord>> _recent = _repository.watchRecent();
   late Stream<List<CareRecord>> _dayStream = _repository.watchDay(_day);
 
@@ -113,7 +113,8 @@ class _RecordsScreenState extends State<RecordsScreen>
 
   Widget _pageFor(RecordCategory category, RecordsPageData data) =>
       switch (category) {
-        RecordCategory.feedingSleep => FeedingSleepPage(data: data),
+        RecordCategory.feeding => FeedingPage(data: data),
+        RecordCategory.sleep => SleepPage(data: data),
         RecordCategory.excretion => ExcretionPage(data: data),
         RecordCategory.meal => MealPage(data: data),
         RecordCategory.care => CarePage(data: data),
@@ -129,6 +130,8 @@ class _RecordsScreenState extends State<RecordsScreen>
             isToday: DateUtils.isSameDay(_day, DateTime.now()),
             onMove: _moveDay,
             onPick: _pickDay,
+            onReminder: () => openReminderSettings(context),
+            onAddMissed: () => _tools.addMissed(context),
           ),
           _CategoryTabBar(controller: _tabs),
           Padding(
@@ -165,61 +168,127 @@ class _RecordsScreenState extends State<RecordsScreen>
   }
 }
 
-/// 一番上の日付。「◀ 2026/11/13(金) ▾ ▶」。真ん中をタップすると日付を選べる
+/// 一番上の日付と、右端の2つのアイコン。
+/// 「◀ 2026/11/13(金) ▾ ▶」の真ん中をタップすると日付を選べる。
+/// ベル = 授乳のお知らせの設定、＋ = 押し忘れた記録の追加。
 class _DateBar extends StatelessWidget {
   const _DateBar({
     required this.text,
     required this.isToday,
     required this.onMove,
     required this.onPick,
+    required this.onReminder,
+    required this.onAddMissed,
   });
 
   final String text;
   final bool isToday;
   final ValueChanged<int> onMove; // -1 = 前の日、+1 = 次の日
   final VoidCallback onPick;
+  final VoidCallback onReminder;
+  final VoidCallback onAddMissed;
 
   @override
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
+    // お知らせがオンのときは、ベルを塗りつぶして金色にする
+    final reminderOn = NursingReminderScope.of(context).settings.enabled;
+
     return Row(
       children: [
-        CupertinoButton(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-          onPressed: () => onMove(-1),
-          child: const Icon(CupertinoIcons.chevron_left, size: 20),
-        ),
         Expanded(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: onPick,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  text,
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: p.textPrimary,
-                  ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _BarIcon(
+                label: '前の日',
+                icon: CupertinoIcons.chevron_left,
+                onTap: () => onMove(-1),
+              ),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onPick,
+                child: Row(
+                  children: [
+                    Text(
+                      text,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: p.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Icon(
+                      CupertinoIcons.arrowtriangle_down_fill,
+                      size: 11,
+                      color: p.textSecondary,
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 6),
-                Icon(
-                  CupertinoIcons.arrowtriangle_down_fill,
-                  size: 11,
-                  color: p.textSecondary,
-                ),
-              ],
+              ),
+              _BarIcon(
+                label: '次の日',
+                icon: CupertinoIcons.chevron_right,
+                onTap: isToday ? null : () => onMove(1),
+              ),
+            ],
+          ),
+        ),
+        _BarIcon(
+          label: '授乳のお知らせ',
+          icon: reminderOn ? CupertinoIcons.bell_fill : CupertinoIcons.bell,
+          color: reminderOn ? p.accent : null,
+          onTap: onReminder,
+        ),
+        _BarIcon(
+          label: '押し忘れを追加',
+          icon: CupertinoIcons.plus,
+          onTap: onAddMissed,
+        ),
+        const SizedBox(width: 4),
+      ],
+    );
+  }
+}
+
+/// 日付バーのアイコン。[onTap] が null のときは薄くして押せなくする
+class _BarIcon extends StatelessWidget {
+  const _BarIcon({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    this.color,
+  });
+
+  final String label; // 読み上げ用
+  final IconData icon;
+  final VoidCallback? onTap;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final iconColor = color ?? CupertinoTheme.of(context).primaryColor;
+    return Semantics(
+      button: true,
+      label: label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: SizedBox(
+          width: 40,
+          height: 44,
+          child: Center(
+            child: Icon(
+              icon,
+              size: 21,
+              color: onTap == null
+                  ? iconColor.withValues(alpha: 0.3)
+                  : iconColor,
             ),
           ),
         ),
-        CupertinoButton(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-          onPressed: isToday ? null : () => onMove(1),
-          child: const Icon(CupertinoIcons.chevron_right, size: 20),
-        ),
-      ],
+      ),
     );
   }
 }
@@ -312,6 +381,48 @@ class RecordsTools {
     final id = record.id;
     if (id != null) repository.delete(id);
   }
+
+  /// 押し忘れの追加: 種類を選ぶ → 時刻を選ぶ →（授乳なら）母乳・ミルク・量を入力
+  Future<void> addMissed(BuildContext context) async {
+    final type = await showCupertinoModalPopup<RecordType>(
+      context: context,
+      builder: (ctx) => CupertinoActionSheet(
+        title: const Text('押し忘れた記録を追加'),
+        actions: [
+          for (final t in const [RecordType.nursing, RecordType.sleep])
+            CupertinoActionSheetAction(
+              onPressed: () => Navigator.of(ctx).pop(t),
+              child: Text(t.label),
+            ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('キャンセル'),
+        ),
+      ),
+    );
+    if (type == null || !context.mounted) return;
+
+    final timing = await showRecordTimingSheet(
+      context,
+      title: '${type.label}を追加',
+      type: type,
+    );
+    if (timing == null) return;
+
+    final id = await repository.add(
+      CareRecord(
+        type: type,
+        endedAt: timing.endedAt,
+        duration: timing.duration,
+      ),
+    );
+    if (id == null || type != RecordType.nursing || !context.mounted) return;
+
+    // 授乳は、続けて「母乳・ミルク・量」も入力できる（やめてもよい）
+    final detail = await showNursingDetailSheet(context);
+    if (detail != null) await repository.updateFields(id, {'detail': detail});
+  }
 }
 
 /// 各ページに渡す、いまのデータ
@@ -340,13 +451,14 @@ class RecordsPageData {
 // ============================================================
 
 /// 1つのタブのページ。上から「経過時間サマリー → 記録ボタン → 今日の回数 → グラフ → 履歴」。
+/// 記録ボタンがないページは [actions] を省略する。
 class CategoryPage extends StatelessWidget {
   const CategoryPage({
     super.key,
     required this.category,
     required this.data,
     required this.summaryItems,
-    required this.actions,
+    this.actions,
     this.extras,
     this.labelOf,
   });
@@ -356,7 +468,7 @@ class CategoryPage extends StatelessWidget {
   final List<SummaryItem> summaryItems;
 
   /// 記録ボタンなど、サマリーのすぐ下に置くもの
-  final Widget actions;
+  final Widget? actions;
 
   /// グラフなど、回数の下に置くもの
   final Widget? extras;
@@ -369,6 +481,8 @@ class CategoryPage extends StatelessWidget {
     final p = AppPalette.of(context);
     final tools = data.tools;
     final records = data.recordsOf(category);
+    final actions = this.actions;
+    final extras = this.extras;
 
     return ListView(
       key: PageStorageKey<String>(category.name), // タブを行き来しても、スクロール位置を覚える
@@ -380,12 +494,14 @@ class CategoryPage extends StatelessWidget {
           ),
           const SizedBox(height: 28),
         ],
-        _Gutter(child: actions),
-        const SizedBox(height: 32),
+        if (actions != null) ...[
+          _Gutter(child: actions),
+          const SizedBox(height: 32),
+        ],
         _Gutter(child: StatsRow(items: categoryStats(category, records))),
         if (extras != null) ...[
           const SizedBox(height: 28),
-          _Gutter(child: extras!),
+          _Gutter(child: extras),
         ],
         const SizedBox(height: 28),
         _Gutter(
@@ -426,104 +542,91 @@ class _Gutter extends StatelessWidget {
 }
 
 // ============================================================
-//  4. 4つのカテゴリページ
+//  4. 5つのカテゴリページ
 // ============================================================
 
-/// 授乳・ねんね。リアルタイムの記録はマップ画面で行い、ここは「ふり返り」と「押し忘れの追加」。
-class FeedingSleepPage extends StatelessWidget {
-  const FeedingSleepPage({super.key, required this.data});
+/// 授乳・ミルク。リアルタイムの記録はマップ画面で行い、ここは「ふり返り」。
+class FeedingPage extends StatelessWidget {
+  const FeedingPage({super.key, required this.data});
 
   final RecordsPageData data;
 
-  /// 押し忘れの追加: 種類を選ぶ → 時刻を選ぶ →（授乳なら）種類・量を入力
-  Future<void> _addMissed(BuildContext context) async {
-    final repository = data.tools.repository;
-
-    final type = await showCupertinoModalPopup<RecordType>(
-      context: context,
-      builder: (ctx) => CupertinoActionSheet(
-        title: const Text('押し忘れた記録を追加'),
-        actions: [
-          for (final t in const [RecordType.nursing, RecordType.sleep])
-            CupertinoActionSheetAction(
-              onPressed: () => Navigator.of(ctx).pop(t),
-              child: Text(t.label),
-            ),
-        ],
-        cancelButton: CupertinoActionSheetAction(
-          onPressed: () => Navigator.of(ctx).pop(),
-          child: const Text('キャンセル'),
-        ),
-      ),
-    );
-    if (type == null || !context.mounted) return;
-
-    final timing = await showRecordTimingSheet(
-      context,
-      title: '${type.label}を追加',
-      type: type,
-    );
-    if (timing == null) return;
-
-    final id = await repository.add(
-      CareRecord(
-        type: type,
-        endedAt: timing.endedAt,
-        duration: timing.duration,
-      ),
-    );
-    if (id == null || type != RecordType.nursing || !context.mounted) return;
-
-    // 授乳は、続けて「母乳・ミルク・量」も入力できる（やめてもよい）
-    final detail = await showNursingDetailSheet(context);
-    if (detail != null) await repository.updateFields(id, {'detail': detail});
-  }
-
   @override
   Widget build(BuildContext context) {
-    final p = AppPalette.of(context);
-
     return CategoryPage(
-      category: RecordCategory.feedingSleep,
+      category: RecordCategory.feeding,
       data: data,
       summaryItems: [
         SummaryItem(
           label: '前回の授乳',
           type: RecordType.nursing,
-          matches: (r) => r.type == RecordType.nursing,
+          breast: true,
+          matches: (r) => r.isBreast,
         ),
+        SummaryItem(
+          label: '前回のミルク',
+          type: RecordType.nursing,
+          matches: (r) => r.isMilk,
+        ),
+      ],
+      extras: RecordChartSection(
+        series: [
+          ChartSeries(
+            label: '授乳',
+            type: RecordType.nursing,
+            breast: true,
+            matches: (r) => r.isBreast,
+          ),
+          ChartSeries(
+            label: 'ミルク',
+            type: RecordType.nursing,
+            matches: (r) => r.isMilk,
+            value: (r) => r.amountMl.toDouble(),
+            unit: 'ml',
+          ),
+        ],
+        records: data.recordsOf(RecordCategory.feeding),
+        recent: data.recent,
+      ),
+    );
+  }
+}
+
+/// ねんね。回数と、睡眠時間（分）のグラフを切り替えられる。
+class SleepPage extends StatelessWidget {
+  const SleepPage({super.key, required this.data});
+
+  final RecordsPageData data;
+
+  @override
+  Widget build(BuildContext context) {
+    return CategoryPage(
+      category: RecordCategory.sleep,
+      data: data,
+      summaryItems: [
         SummaryItem(
           label: '前回の寝かしつけ',
           type: RecordType.sleep,
           matches: (r) => r.type == RecordType.sleep,
         ),
       ],
-      actions: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 4, 16),
-            child: Text(
-              '授乳・寝かしつけは、マップ画面で光を灯して記録します。',
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.5,
-                color: p.textSecondary,
-              ),
-            ),
+      extras: RecordChartSection(
+        series: [
+          ChartSeries(
+            label: '回数',
+            type: RecordType.sleep,
+            matches: (r) => r.type == RecordType.sleep,
           ),
-          InsetSection(
-            margin: EdgeInsets.zero,
-            children: [
-              const ReminderSettingsTile(),
-              InsetTile(title: '押し忘れを追加', onTap: () => _addMissed(context)),
-            ],
+          ChartSeries(
+            label: '睡眠時間',
+            type: RecordType.sleep,
+            matches: (r) => r.type == RecordType.sleep,
+            value: (r) => r.duration.inSeconds / 60,
+            unit: '分',
           ),
         ],
-      ),
-      extras: HourlyChartSection(
-        types: const [RecordType.nursing, RecordType.sleep],
-        records: data.recordsOf(RecordCategory.feedingSleep),
+        records: data.recordsOf(RecordCategory.sleep),
+        recent: data.recent,
       ),
     );
   }
@@ -556,16 +659,20 @@ class ExcretionPage extends StatelessWidget {
         actions: const [QuickAction.pee, QuickAction.poop],
         onAction: (action) => data.tools.run(context, action),
       ),
-      extras: HourlyChartSection(
-        types: const [RecordType.pee, RecordType.poop],
+      extras: RecordChartSection(
+        series: [
+          ChartSeries.countOf(RecordType.pee),
+          ChartSeries.countOf(RecordType.poop),
+        ],
         records: data.recordsOf(RecordCategory.excretion),
+        recent: data.recent,
       ),
     );
   }
 }
 
 /// 食事（離乳食・ミルク・おやつ）。
-/// ミルクは授乳（ミルク）として保存されるので、授乳・ねんねのページにも出る。
+/// ミルクは授乳（ミルク）として保存されるので、授乳・ミルクのページにも出る。
 class MealPage extends StatelessWidget {
   const MealPage({super.key, required this.data});
 

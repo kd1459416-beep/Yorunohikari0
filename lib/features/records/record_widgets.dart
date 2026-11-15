@@ -16,47 +16,139 @@ import 'record_store.dart';
 //  1. 種別・カテゴリの色とアイコン
 // ============================================================
 
-extension RecordTypeStyle on RecordType {
-  Color color(AppPalette p) => switch (this) {
-    RecordType.nursing => p.nursing,
-    RecordType.sleep => p.sleeping,
-    RecordType.pee => const Color(0xFF38BDF8),
-    RecordType.poop => const Color(0xFFC98A4B),
-    RecordType.babyFood => const Color(0xFF4CAF82),
-    RecordType.snack => const Color(0xFFE0A030),
-    RecordType.temperature => const Color(0xFFE5739A),
-    RecordType.hospital => const Color(0xFFE5736E),
-    RecordType.bath => const Color(0xFF2BB5B5),
-  };
+/// 母乳（抱っこ）の色。ダークネイビーの背景でも目にやさしい、やわらかいコーラルピンク
+const breastColor = Color(0xFFF29E9B);
 
-  Widget icon(Color color, {double size = 24}) => switch (this) {
-    RecordType.nursing => BottleIcon(size: size, color: color),
-    RecordType.sleep => Icon(
-      CupertinoIcons.moon_zzz_fill,
-      size: size,
-      color: color,
-    ),
-    RecordType.pee => Icon(CupertinoIcons.drop_fill, size: size, color: color),
-    RecordType.poop => PoopIcon(size: size, color: color),
-    RecordType.babyFood => Icon(
-      Icons.rice_bowl_rounded,
-      size: size,
-      color: color,
-    ),
-    // Icons.cookie_rounded が無いというエラーが出たら、Icons.bakery_dining_rounded に
-    RecordType.snack => Icon(Icons.cookie_rounded, size: size, color: color),
-    RecordType.temperature => Icon(
-      CupertinoIcons.thermometer,
-      size: size,
-      color: color,
-    ),
-    RecordType.hospital => Icon(
-      Icons.local_hospital_rounded,
-      size: size,
-      color: color,
-    ),
-    RecordType.bath => Icon(Icons.bathtub_rounded, size: size, color: color),
-  };
+extension RecordTypeStyle on RecordType {
+  /// [breast] が true のときだけ、母乳の色にする（授乳のうち、ミルク以外）
+  Color color(AppPalette p, {bool breast = false}) => breast
+      ? breastColor
+      : switch (this) {
+          RecordType.nursing => p.nursing, // ミルクは、これまでの灯りイエロー
+          RecordType.sleep => p.sleeping,
+          RecordType.pee => const Color(0xFF38BDF8),
+          RecordType.poop => const Color(0xFFC98A4B),
+          RecordType.babyFood => const Color(0xFF4CAF82),
+          RecordType.snack => const Color(0xFFE0A030),
+          RecordType.temperature => const Color(0xFFE5739A),
+          RecordType.hospital => const Color(0xFFE5736E),
+          RecordType.bath => const Color(0xFF2BB5B5),
+        };
+
+  /// [breast] が true のときだけ、抱っこのアイコンにする（授乳のうち、ミルク以外）
+  Widget icon(Color color, {double size = 24, bool breast = false}) => breast
+      ? BreastfeedingIcon(size: size, color: color)
+      : switch (this) {
+          RecordType.nursing => BottleIcon(size: size, color: color),
+          RecordType.sleep => Icon(
+            CupertinoIcons.moon_zzz_fill,
+            size: size,
+            color: color,
+          ),
+          RecordType.pee => Icon(
+            CupertinoIcons.drop_fill,
+            size: size,
+            color: color,
+          ),
+          RecordType.poop => PoopIcon(size: size, color: color),
+          RecordType.babyFood => Icon(
+            Icons.rice_bowl_rounded,
+            size: size,
+            color: color,
+          ),
+          // Icons.cookie_rounded が無いというエラーが出たら、Icons.bakery_dining_rounded に
+          RecordType.snack => Icon(
+            Icons.cookie_rounded,
+            size: size,
+            color: color,
+          ),
+          RecordType.temperature => Icon(
+            CupertinoIcons.thermometer,
+            size: size,
+            color: color,
+          ),
+          RecordType.hospital => Icon(
+            Icons.local_hospital_rounded,
+            size: size,
+            color: color,
+          ),
+          RecordType.bath => Icon(
+            Icons.bathtub_rounded,
+            size: size,
+            color: color,
+          ),
+        };
+}
+
+/// 記録1件の色とアイコン。授乳は、母乳とミルクで見た目を変える
+extension CareRecordStyle on CareRecord {
+  Color color(AppPalette p) => type.color(p, breast: isBreast);
+
+  Widget icon(AppPalette p, {double size = 24}) =>
+      type.icon(color(p), size: size, breast: isBreast);
+}
+
+/// 母乳のアイコン（赤ちゃんを抱っこしている人のシルエット）
+class BreastfeedingIcon extends StatelessWidget {
+  const BreastfeedingIcon({super.key, required this.color, this.size = 24});
+
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => SizedBox.square(
+    dimension: size,
+    child: CustomPaint(painter: _BreastfeedingPainter(color)),
+  );
+}
+
+class _BreastfeedingPainter extends CustomPainter {
+  const _BreastfeedingPainter(this.color);
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.scale(size.width / 24); // 24x24 の座標で描く
+    final paint = Paint()..color = color;
+
+    // 赤ちゃん（体 + 頭）。人の体の上に重ねる
+    final baby = Path()
+      ..addRRect(
+        RRect.fromLTRBR(10.4, 14.6, 21.2, 20.2, const Radius.circular(2.8)),
+      )
+      ..addOval(Rect.fromCircle(center: const Offset(19.2, 12), radius: 2.3));
+
+    canvas.saveLayer(const Rect.fromLTWH(0, 0, 24, 24), Paint());
+
+    // 抱っこする人（頭と体）
+    canvas.drawCircle(const Offset(8.4, 5.4), 3, paint);
+    canvas.drawPath(
+      Path()
+        ..moveTo(2.6, 22)
+        ..lineTo(2.6, 15)
+        ..quadraticBezierTo(2.6, 9.8, 8.4, 9.8)
+        ..quadraticBezierTo(14.2, 9.8, 14.2, 15)
+        ..lineTo(14.2, 22)
+        ..close(),
+      paint,
+    );
+
+    // 赤ちゃんのまわりを少し切り抜いて、体と重ならないようにする
+    canvas.drawPath(
+      baby,
+      Paint()
+        ..blendMode = BlendMode.clear
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.4
+        ..strokeJoin = StrokeJoin.round,
+    );
+    canvas.drawPath(baby, paint);
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_BreastfeedingPainter old) => old.color != color;
 }
 
 /// うんちのアイコン（3段に重なった形）
@@ -117,14 +209,12 @@ class SummaryItem {
     required this.label,
     required this.type,
     required this.matches,
+    this.breast = false, // 母乳なら true（ピンク + 抱っこのアイコン）
   });
 
   final String label;
-
-  /// 色とアイコンを借りる種別
   final RecordType type;
-
-  /// 「前回」の対象にする記録の条件
+  final bool breast;
   final bool Function(CareRecord) matches;
 }
 
@@ -210,7 +300,7 @@ class _SummaryCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
     final record = last;
-    final color = item.type.color(p);
+    final color = item.type.color(p, breast: item.breast);
 
     return Padding(
       padding: const EdgeInsets.all(18),
@@ -219,7 +309,7 @@ class _SummaryCell extends StatelessWidget {
         children: [
           Row(
             children: [
-              item.type.icon(color, size: 16),
+              item.type.icon(color, size: 16, breast: item.breast),
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
@@ -409,7 +499,7 @@ class JustRecordedBanner extends StatelessWidget {
                       padding: const EdgeInsets.fromLTRB(14, 2, 4, 2),
                       child: Row(
                         children: [
-                          record.type.icon(record.type.color(p), size: 20),
+                          record.icon(p, size: 20),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
@@ -476,7 +566,9 @@ class StatsRow extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.w300,
-                    color: p.textPrimary,
+                    color:
+                        item.type?.color(p, breast: item.breast) ??
+                        p.textPrimary,
                   ),
                 ),
               ],
@@ -565,7 +657,7 @@ class DayRecordList extends StatelessWidget {
                       DecoratedBox(
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: record.type.color(p),
+                          color: record.color(p),
                         ),
                         child: const SizedBox.square(dimension: 8),
                       ),
@@ -606,46 +698,60 @@ class DayRecordList extends StatelessWidget {
 }
 
 // ============================================================
-//  5. グラフ
+//  5. グラフ（棒グラフ）
 // ============================================================
 
-/// 0〜23時の24点を滑らかな曲線で描く。
-class RecordLineChart extends StatelessWidget {
-  const RecordLineChart({
+/// 棒グラフ。1本が、1つの時間帯（または1日）。
+class RecordBarChart extends StatelessWidget {
+  const RecordBarChart({
     super.key,
     required this.values,
     required this.color,
-    required this.unit,
-    this.minTop = 1,
-    this.yInterval,
-  }) : assert(values.length == 24);
+    required this.labelOf,
+    required this.tooltipOf,
+    this.minTop = 3,
+    this.barWidth = 8,
+  });
 
   final List<double> values;
   final Color color;
-  final String unit;
+  final double barWidth;
 
-  /// 縦軸の上限の最小値（回数のグラフを、0・1・2…の整数で見せるため）
+  /// 縦軸の上限の最小値（回数は 3、ml は 100 など。棒が大げさに伸びないようにする）
   final double minTop;
 
-  /// 縦軸の目盛りの間隔（null なら自動）
-  final double? yInterval;
+  /// 横軸の文字。null を返した位置には何も出さない
+  final String? Function(int index) labelOf;
+
+  /// 棒を押したときに出す文字
+  final String Function(int index, double value) tooltipOf;
+
+  /// 縦軸の目盛りの間隔の候補
+  static const _intervals = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
 
   @override
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
     final labelStyle = TextStyle(fontSize: 10, color: p.textSecondary);
-    final maxY = math.max(values.reduce(math.max) * 1.25, minTop);
 
-    return LineChart(
-      LineChartData(
-        minX: 0,
-        maxX: 23,
+    // 縦軸の上限と目盛りの間隔。目盛りはおよそ4本になる、切りのいい数にする
+    final raw = math.max(values.reduce(math.max), minTop);
+    final interval = raw <= 6
+        ? 1.0
+        : _intervals
+              .firstWhere((i) => i >= raw / 4, orElse: () => 1000)
+              .toDouble();
+    final top = (raw / interval).ceil() * interval;
+
+    return BarChart(
+      BarChartData(
         minY: 0,
-        maxY: maxY,
+        maxY: top,
+        alignment: BarChartAlignment.spaceAround,
         borderData: FlBorderData(show: false),
         gridData: FlGridData(
           drawVerticalLine: false,
-          horizontalInterval: yInterval,
+          horizontalInterval: interval,
           getDrawingHorizontalLine: (_) =>
               FlLine(color: p.hairline, strokeWidth: 0.5),
         ),
@@ -655,106 +761,272 @@ class RecordLineChart extends StatelessWidget {
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
-              interval: 6,
-              getTitlesWidget: (v, _) => Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text('${v.toInt()}時', style: labelStyle),
-              ),
+              reservedSize: 24,
+              getTitlesWidget: (v, _) {
+                final text = labelOf(v.toInt());
+                if (text == null) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(text, style: labelStyle),
+                );
+              },
             ),
           ),
           leftTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
-              reservedSize: 40,
-              interval: yInterval,
-              maxIncluded: false,
+              reservedSize: 32,
+              interval: interval,
               getTitlesWidget: (v, _) =>
-                  Text('${v.round()}$unit', style: labelStyle),
+                  Text('${v.round()}', style: labelStyle),
             ),
           ),
         ),
-        lineTouchData: LineTouchData(
-          touchTooltipData: LineTouchTooltipData(
+        barTouchData: BarTouchData(
+          touchTooltipData: BarTouchTooltipData(
             getTooltipColor: (_) => p.surface,
-            getTooltipItems: (spots) => [
-              for (final s in spots)
-                LineTooltipItem(
-                  '${s.x.toInt()}時  ${s.y.round()}$unit',
+            getTooltipItem: (group, groupIndex, rod, rodIndex) =>
+                BarTooltipItem(
+                  tooltipOf(group.x, rod.toY),
                   TextStyle(color: p.textPrimary, fontSize: 12),
                 ),
-            ],
           ),
         ),
-        lineBarsData: [
-          LineChartBarData(
-            spots: [
-              for (final (i, v) in values.indexed) FlSpot(i.toDouble(), v),
-            ],
-            isCurved: true,
-            curveSmoothness: 0.25,
-            preventCurveOverShooting: true, // 0未満に膨らまない
-            color: color,
-            barWidth: 2,
-            dotData: const FlDotData(show: false),
-            belowBarData: BarAreaData(
-              show: true,
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  color.withValues(alpha: 0.25),
-                  color.withValues(alpha: 0),
-                ],
-              ),
+        barGroups: [
+          for (final (i, value) in values.indexed)
+            BarChartGroupData(
+              x: i,
+              barRods: [
+                BarChartRodData(
+                  toY: value,
+                  color: color,
+                  width: barWidth,
+                  borderRadius: BorderRadius.vertical(
+                    top: Radius.circular(barWidth / 2),
+                  ),
+                ),
+              ],
             ),
-          ),
         ],
       ),
     );
   }
 }
 
-/// 1日の時間帯別グラフ。[types] が2つ以上なら、切り替えのタブを出す。
-class HourlyChartSection extends StatefulWidget {
-  const HourlyChartSection({
-    super.key,
-    required this.types,
-    required this.records,
-  });
+/// グラフの期間
+enum ChartRange {
+  day('1日'),
+  week('7日間');
 
-  final List<RecordType> types;
-  final List<CareRecord> records; // 選んだ日の記録
-
-  @override
-  State<HourlyChartSection> createState() => _HourlyChartSectionState();
+  const ChartRange(this.label);
+  final String label;
 }
 
-class _HourlyChartSectionState extends State<HourlyChartSection> {
-  late RecordType _type = widget.types.first;
+/// グラフに描く1種類のデータ。例: 「授乳（回数）」「ミルク（ml）」
+class ChartSeries {
+  ChartSeries({
+    required this.label,
+    required this.type,
+    required this.matches,
+    this.value = _one,
+    this.unit = '回',
+    this.breast = false, // 母乳なら true（ピンクの棒）
+  });
+
+  /// 種別ごとの回数グラフ（おしっこ・うんちなど）
+  factory ChartSeries.countOf(RecordType type) => ChartSeries(
+    label: type.label,
+    type: type,
+    matches: (r) => r.type == type,
+  );
+
+  final String label;
+
+  /// 棒の色を借りる種別
+  final RecordType type;
+
+  /// このデータに数える記録の条件
+  final bool Function(CareRecord) matches;
+
+  /// 1件ぶんの値。省略すると 1（= 回数）
+  final double Function(CareRecord) value;
+
+  /// 単位（回・ml・分）
+  final String unit;
+
+  /// 母乳（ミルク以外の授乳）か
+  final bool breast;
+
+  /// グラフ・切り替えに使う色
+  Color color(AppPalette p) => type.color(p, breast: breast);
+
+  /// 縦軸の上限の最小値
+  double get minTop => switch (unit) {
+    'ml' => 100.0,
+    '分' => 60.0,
+    _ => 3.0,
+  };
+
+  static double _one(CareRecord _) => 1;
+}
+
+const _weekdayNames = ['月', '火', '水', '木', '金', '土', '日'];
+
+/// グラフに描くデータの切り替え。選んでいるものは、そのデータの色でうっすら塗る（凡例も兼ねる）
+class _SeriesSwitch extends StatelessWidget {
+  const _SeriesSwitch({
+    required this.series,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  final List<ChartSeries> series;
+  final int selected;
+  final ValueChanged<int> onChanged;
 
   @override
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
+    return Row(
+      children: [
+        for (final (i, s) in series.indexed) ...[
+          if (i > 0) const SizedBox(width: 8),
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => onChanged(i),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                height: 36,
+                decoration: BoxDecoration(
+                  color: i == selected
+                      ? s.color(p).withValues(alpha: 0.22)
+                      : p.surface,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: s.color(p),
+                      ),
+                      child: const SizedBox.square(dimension: 8),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      s.label,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: i == selected
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                        color: i == selected ? s.color(p) : p.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// 棒グラフのまとまり。[series] が2つ以上なら種類の切り替え、期間は「1日 / 7日間」を切り替える。
+/// 1日は時間帯ごと、7日間は日ごとの合計を出す。
+class RecordChartSection extends StatefulWidget {
+  const RecordChartSection({
+    super.key,
+    required this.series,
+    required this.records,
+    required this.recent,
+  });
+
+  final List<ChartSeries> series;
+
+  /// 選んだ日の記録（1日のグラフ用）
+  final List<CareRecord> records;
+
+  /// 直近の記録（7日間のグラフ用）
+  final List<CareRecord> recent;
+
+  @override
+  State<RecordChartSection> createState() => _RecordChartSectionState();
+}
+
+class _RecordChartSectionState extends State<RecordChartSection> {
+  // series は画面が更新されるたびに作り直されるので、選んだものは番号で覚える
+  int _index = 0;
+  ChartRange _range = ChartRange.day;
+
+  ChartSeries get _series =>
+      widget.series[math.min(_index, widget.series.length - 1)];
+
+  Widget _dayChart(Color color) {
+    final s = _series;
+    return RecordBarChart(
+      values: widget.records.where(s.matches).hourlyTotals(s.value),
+      color: color,
+      minTop: s.minTop,
+      labelOf: (i) => i % 6 == 0 ? '$i時' : null,
+      tooltipOf: (i, v) => '$i時  ${v.round()}${s.unit}',
+    );
+  }
+
+  Widget _weekChart(Color color) {
+    final s = _series;
+    final today = DateTime.now();
+    // i 番目の棒の日付（6 = 今日）
+    DateTime dateOf(int i) =>
+        DateTime(today.year, today.month, today.day - (6 - i));
+    String weekdayOf(int i) => _weekdayNames[dateOf(i).weekday - 1];
+
+    return RecordBarChart(
+      values: widget.recent.where(s.matches).dailyTotals(s.value, today: today),
+      color: color,
+      minTop: s.minTop,
+      barWidth: 20,
+      labelOf: (i) => i == 6 ? '今日' : weekdayOf(i),
+      tooltipOf: (i, v) {
+        final d = dateOf(i);
+        return '${d.month}/${d.day}(${weekdayOf(i)})  ${v.round()}${s.unit}';
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = AppPalette.of(context);
+    final color = _series.color(p);
+
     return Column(
       children: [
-        if (widget.types.length > 1) ...[
-          LabeledSegmented<RecordType>(
-            value: _type,
-            options: {for (final t in widget.types) t: t.label},
-            onChanged: (t) => setState(() => _type = t),
+        if (widget.series.length > 1) ...[
+          _SeriesSwitch(
+            series: widget.series,
+            selected: math.min(_index, widget.series.length - 1),
+            onChanged: (i) => setState(() => _index = i),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
         ],
+        LabeledSegmented<ChartRange>(
+          value: _range,
+          options: {for (final r in ChartRange.values) r: r.label},
+          onChanged: (r) => setState(() => _range = r),
+        ),
+        const SizedBox(height: 20),
         SizedBox(
           height: 220,
-          child: RecordLineChart(
-            values: widget.records
-                .where((r) => r.type == _type)
-                .hourly(_type.valueOf),
-            color: _type.color(p),
-            unit: _type.unit,
-            minTop: _type.isCount ? 4 : 1,
-            yInterval: _type.isCount ? 1 : null,
+          // 一番上の数字が、上に少しはみ出しても切れないように、余白をあける
+          child: Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: _range == ChartRange.day
+                ? _dayChart(color)
+                : _weekChart(color),
           ),
         ),
       ],

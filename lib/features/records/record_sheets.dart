@@ -388,8 +388,9 @@ Future<void> editRecordDetail(
     type: record.type,
     initial: RecordDetail.fromRecord(record),
   );
-  if (input != null)
+  if (input != null) {
     await repository.updateFields(id, input.toFields(record.type));
+  }
 }
 
 /// ボタンの種類に応じた記録の流れ。

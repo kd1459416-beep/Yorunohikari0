@@ -1,4 +1,3 @@
-import 'dart:ui' show FontFeature;
 import 'package:flutter/cupertino.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/utils/time_format.dart';

@@ -139,7 +139,7 @@ class ToneTile extends StatelessWidget {
         switchOutCurve: Curves.easeInOut,
         layoutBuilder: (current, previous) => Stack(
           alignment: Alignment.topLeft,
-          children: [...previous, if (current != null) current],
+          children: [...previous, ?current],
         ),
         child: Column(
           key: ValueKey(isLight), // モードが変わったときだけ入れ替わる

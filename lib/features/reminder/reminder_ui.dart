@@ -10,41 +10,42 @@ import 'reminder_service.dart';
 //  1. 設定の行（マイページと、授乳・ねんねページに置く）
 // ============================================================
 
-/// 「授乳のお知らせ  12:30 に通知」の1行。タップで設定シートを開く。
+/// 設定シートを開き、保存されたら反映する。
+/// 通知が許可されていなかったときは、設定アプリへの案内を出す。
+/// （記録画面のベルと、マイページの行の、両方から使う）
+Future<void> openReminderSettings(BuildContext context) async {
+  final controller = NursingReminderScope.of(context);
+  final result = await showReminderSettingsSheet(
+    context,
+    initial: controller.settings,
+  );
+  if (result == null) return;
+
+  final ok = await controller.update(
+    enabled: result.enabled,
+    interval: result.interval,
+  );
+  if (ok || !context.mounted) return;
+
+  // 通知が許可されなかったとき
+  await showCupertinoDialog<void>(
+    context: context,
+    builder: (ctx) => CupertinoAlertDialog(
+      title: const Text('通知が許可されていません'),
+      content: const Text('設定アプリの「通知」から、ヨルノヒカリの通知を許可してください。'),
+      actions: [
+        CupertinoDialogAction(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('閉じる'),
+        ),
+      ],
+    ),
+  );
+}
+
+/// 「授乳のお知らせ  12:30 に通知」の1行（マイページに置く）。タップで設定シートを開く。
 class ReminderSettingsTile extends StatelessWidget {
   const ReminderSettingsTile({super.key});
-
-  Future<void> _open(
-    BuildContext context,
-    NursingReminderController controller,
-  ) async {
-    final result = await showReminderSettingsSheet(
-      context,
-      initial: controller.settings,
-    );
-    if (result == null) return;
-
-    final ok = await controller.update(
-      enabled: result.enabled,
-      interval: result.interval,
-    );
-    if (ok || !context.mounted) return;
-
-    // 通知が許可されなかったとき
-    await showCupertinoDialog<void>(
-      context: context,
-      builder: (ctx) => CupertinoAlertDialog(
-        title: const Text('通知が許可されていません'),
-        content: const Text('設定アプリの「通知」から、ヨルノヒカリの通知を許可してください。'),
-        actions: [
-          CupertinoDialogAction(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('閉じる'),
-          ),
-        ],
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -64,7 +65,7 @@ class ReminderSettingsTile extends StatelessWidget {
     return InsetTile(
       title: '授乳のお知らせ',
       value: value,
-      onTap: () => _open(context, controller),
+      onTap: () => openReminderSettings(context),
     );
   }
 }

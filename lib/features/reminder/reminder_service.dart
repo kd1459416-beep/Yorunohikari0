@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -105,8 +104,9 @@ class NotificationService {
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
         >();
-    if (android != null)
+    if (android != null) {
       return await android.requestNotificationsPermission() ?? false;
+    }
     return true;
   }
 
@@ -233,8 +233,9 @@ class NursingReminderController extends ChangeNotifier {
 
     final at = base.add(_settings.interval);
     // すでに過ぎている（または、ほぼ今）なら、予約しない
-    if (!at.isAfter(_clock().add(const Duration(seconds: 30))))
+    if (!at.isAfter(_clock().add(const Duration(seconds: 30)))) {
       return _cancel();
+    }
     // すでに同じ時刻で予約済みなら、何もしない
     if (_scheduledAt == at) return;
 
