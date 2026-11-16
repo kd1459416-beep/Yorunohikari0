@@ -558,10 +558,10 @@ class FeedingPage extends StatelessWidget {
       data: data,
       summaryItems: [
         SummaryItem(
-          label: '前回の授乳',
+          label: '前回の母乳',
           type: RecordType.nursing,
           breast: true,
-          matches: (r) => r.isBreast,
+          matches: (r) => r.countsAsBreastfeeding,
         ),
         SummaryItem(
           label: '前回のミルク',
@@ -572,10 +572,10 @@ class FeedingPage extends StatelessWidget {
       extras: RecordChartSection(
         series: [
           ChartSeries(
-            label: '授乳',
+            label: '母乳',
             type: RecordType.nursing,
             breast: true,
-            matches: (r) => r.isBreast,
+            matches: (r) => r.countsAsBreastfeeding,
           ),
           ChartSeries(
             label: 'ミルク',
@@ -592,7 +592,7 @@ class FeedingPage extends StatelessWidget {
   }
 }
 
-/// ねんね。回数と、睡眠時間（分）のグラフを切り替えられる。
+/// 寝かしつけ。回数と、睡眠時間（分）のグラフを切り替えられる。
 class SleepPage extends StatelessWidget {
   const SleepPage({super.key, required this.data});
 
@@ -618,7 +618,7 @@ class SleepPage extends StatelessWidget {
             matches: (r) => r.type == RecordType.sleep,
           ),
           ChartSeries(
-            label: '睡眠時間',
+            label: '所要時間',
             type: RecordType.sleep,
             matches: (r) => r.type == RecordType.sleep,
             value: (r) => r.duration.inSeconds / 60,

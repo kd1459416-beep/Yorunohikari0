@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../core/theme/app_palette.dart';
 import '../../../core/widgets/labeled_segmented.dart';
+import '../../records/record_widgets.dart' show breastColor;
 
 /// 保存したら詳細文字列を返す。閉じたら null（計測は続く）。
 Future<String?> showNursingDetailSheet(
@@ -101,6 +102,11 @@ class _NursingDetailSheetState extends State<_NursingDetailSheet> {
                   value: _type,
                   options: {for (final t in _FeedType.values) t: t.label},
                   onChanged: (t) => setState(() => _type = t),
+                  dotColors: {
+                    _FeedType.breast: [breastColor],
+                    _FeedType.formula: [p.nursing],
+                    _FeedType.mixed: [breastColor, p.nursing],
+                  },
                 ),
                 if (_type.hasBreast) ...[
                   const SizedBox(height: 20),

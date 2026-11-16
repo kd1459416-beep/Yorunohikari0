@@ -87,8 +87,13 @@ class CareRecord {
       type == RecordType.nursing &&
       (detail.startsWith('ミルク') || detail.startsWith('混合'));
 
-  /// 母乳・搾母乳など、ミルク以外の授乳
+  /// 母乳・搾母乳など、ミルク以外の授乳（アイコン・色の判定用。混合はミルク側の見た目になる）
   bool get isBreast => type == RecordType.nursing && !isMilk;
+
+  /// 母乳をあげた回数として数えるべきか（母乳のみ・混合のどちらも含む）
+  bool get countsAsBreastfeeding =>
+      type == RecordType.nursing &&
+      (detail.startsWith('母乳') || detail.startsWith('混合'));
 
   /// 保存する時間の形（"05:30"）。既存の記録と同じ
   static String encodeDuration(Duration d) =>
@@ -172,7 +177,7 @@ extension RecordAggregation on Iterable<CareRecord> {
 /// 記録タブの5つのメニュー。どの記録がどのカテゴリに入るかを、ここで決める。
 enum RecordCategory {
   feeding('授乳・ミルク', '前回からの時間・ふり返り'),
-  sleep('ねんね', '前回からの時間・ふり返り'),
+  sleep('寝かしつけ', '前回からの時間・ふり返り'),
   excretion('排泄', 'おしっこ・うんち'),
   meal('食事', '離乳食・ミルク・おやつ'),
   care('体調・ケア', '体温・お風呂・病院・お薬');
@@ -225,15 +230,15 @@ List<StatItem> categoryStats(
   return switch (category) {
     RecordCategory.feeding => [
       StatItem(
-        '授乳',
-        '${count((r) => r.isBreast)}回',
+        '母乳',
+        '${count((r) => r.countsAsBreastfeeding)}回',
         type: RecordType.nursing,
         breast: true,
       ),
       StatItem('ミルク', '${milkMl()}ml', type: RecordType.nursing),
     ],
     RecordCategory.sleep => [
-      StatItem('ねんね', '${count((r) => r.type == RecordType.sleep)}回'),
+      StatItem('寝かしつけ', '${count((r) => r.type == RecordType.sleep)}回'),
       StatItem('合計', _totalSleep(records)),
     ],
     RecordCategory.excretion => [
