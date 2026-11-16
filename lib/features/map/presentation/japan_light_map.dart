@@ -44,7 +44,7 @@ class _JapanLightMapState extends State<JapanLightMap> {
             urlTemplate: dark
                 ? 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
                 : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            userAgentPackageName: 'com.example.yorunohikari',
+            userAgentPackageName: 'com.yorunohikari.app',
           ),
           MarkerLayer(markers: widget.markers),
           MarkerLayer(markers: widget.overlayMarkers), // 吹き出しは最前面

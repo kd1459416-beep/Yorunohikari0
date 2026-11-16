@@ -11,7 +11,7 @@ abstract final class AppLinks {
   static const appStoreId = '';
 
   /// Android のパッケージ名
-  static const playStorePackage = 'com.example.yorunohikari';
+  static const playStorePackage = 'com.yorunohikari.app';
 
   /// ストアのページ。公開前（IDが空）は null
   static Uri? get storeUri {
