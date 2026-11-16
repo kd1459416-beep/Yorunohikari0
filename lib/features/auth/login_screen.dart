@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/widgets/labeled_segmented.dart';
 
@@ -37,6 +38,11 @@ class _LoginScreenState extends State<LoginScreen> {
       await action();
     } on FirebaseAuthException catch (e) {
       if (mounted) setState(() => _error = _messageFor(e));
+    } on GoogleSignInException catch (e) {
+      // キャンセルはエラー表示しない
+      if (mounted && e.code != GoogleSignInExceptionCode.canceled) {
+        setState(() => _error = 'Googleログインに失敗しました');
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -62,6 +68,14 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _signInAnonymously() =>
       _run(() => FirebaseAuth.instance.signInAnonymously());
+
+  Future<void> _signInWithGoogle() => _run(() async {
+    final account = await GoogleSignIn.instance.authenticate();
+    final credential = GoogleAuthProvider.credential(
+      idToken: account.authentication.idToken,
+    );
+    await FirebaseAuth.instance.signInWithCredential(credential);
+  });
 
   String _messageFor(FirebaseAuthException e) => switch (e.code) {
     'invalid-email' => 'メールアドレスの形式が正しくありません',
@@ -158,6 +172,22 @@ class _LoginScreenState extends State<LoginScreen> {
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: CupertinoButton(
+                      color: p.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      onPressed: _loading ? null : _signInWithGoogle,
+                      child: Text(
+                        'Googleでログイン',
+                        style: TextStyle(
+                          color: p.textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 8),
