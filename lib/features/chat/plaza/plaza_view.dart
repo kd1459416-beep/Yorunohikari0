@@ -35,9 +35,11 @@ class _PlazaViewState extends State<PlazaView> {
     if (draft == null) return;
     try {
       await _repository.addPost(text: draft.text, category: draft.category);
+    } on PlazaNgContentException {
+      if (mounted) _showError('この内容は投稿できません。言葉を見直して、もう一度お試しください。');
     } catch (e) {
       debugPrint('投稿エラー: $e');
-      if (mounted) _showError();
+      if (mounted) _showError('通信を確認して、もう一度お試しください。');
     }
   }
 
@@ -50,6 +52,14 @@ class _PlazaViewState extends State<PlazaView> {
     if (ok) await _repository.deletePost(post);
   }
 
+  Future<void> _report(Post post) async {
+    final ok = await confirmDialog(
+      context,
+      message: 'この投稿を通報しますか？\n複数人から通報された投稿は自動的に非表示になります。',
+    );
+    if (ok) await _repository.reportPost(post.id);
+  }
+
   void _openDetail(Post post) {
     Navigator.of(context).push(
       CupertinoPageRoute<void>(
@@ -58,12 +68,12 @@ class _PlazaViewState extends State<PlazaView> {
     );
   }
 
-  void _showError() {
+  void _showError(String message) {
     showCupertinoDialog<void>(
       context: context,
       builder: (ctx) => CupertinoAlertDialog(
         title: const Text('投稿できませんでした'),
-        content: const Text('通信を確認して、もう一度お試しください。'),
+        content: Text(message),
         actions: [
           CupertinoDialogAction(
             onPressed: () => Navigator.of(ctx).pop(),
@@ -90,6 +100,7 @@ class _PlazaViewState extends State<PlazaView> {
                 myUid: _repository.uid,
                 onOpen: _openDetail,
                 onDelete: _delete,
+                onReport: _report,
               ),
             ),
           ],
@@ -112,6 +123,7 @@ class _PostFeed extends StatelessWidget {
     required this.myUid,
     required this.onOpen,
     required this.onDelete,
+    required this.onReport,
   });
 
   final Stream<List<Post>> posts;
@@ -119,6 +131,7 @@ class _PostFeed extends StatelessWidget {
   final String? myUid;
   final ValueChanged<Post> onOpen;
   final ValueChanged<Post> onDelete;
+  final ValueChanged<Post> onReport;
 
   @override
   Widget build(BuildContext context) {
@@ -152,10 +165,12 @@ class _PostFeed extends StatelessWidget {
           itemCount: list.length,
           itemBuilder: (_, i) {
             final post = list[i];
+            final isMine = post.authorId == myUid;
             return PostCard(
               post: post,
               onTap: () => onOpen(post),
-              onDelete: post.authorId == myUid ? () => onDelete(post) : null,
+              onDelete: isMine ? () => onDelete(post) : null,
+              onReport: isMine ? null : () => onReport(post),
             );
           },
         );

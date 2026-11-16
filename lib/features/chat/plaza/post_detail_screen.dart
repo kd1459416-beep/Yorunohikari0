@@ -45,9 +45,11 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     try {
       await widget.repository.addComment(postId: widget.post.id, text: text);
       _input.clear();
+    } on PlazaNgContentException {
+      if (mounted) _showError('この内容は投稿できません。言葉を見直して、もう一度お試しください。');
     } catch (e) {
       debugPrint('コメント送信エラー: $e');
-      if (mounted) _showError();
+      if (mounted) _showError('通信を確認して、もう一度お試しください。');
     } finally {
       if (mounted) setState(() => _isSending = false);
     }
@@ -64,12 +66,33 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     if (mounted) Navigator.of(context).pop();
   }
 
-  void _showError() {
+  Future<void> _reportPost() async {
+    final ok = await confirmDialog(
+      context,
+      message: 'この投稿を通報しますか？\n複数人から通報された投稿は自動的に非表示になります。',
+    );
+    if (ok) await widget.repository.reportPost(widget.post.id);
+  }
+
+  Future<void> _reportComment(PostComment comment) async {
+    final ok = await confirmDialog(
+      context,
+      message: 'このコメントを通報しますか？\n複数人から通報されたコメントは自動的に非表示になります。',
+    );
+    if (ok) {
+      await widget.repository.reportComment(
+        postId: widget.post.id,
+        commentId: comment.id,
+      );
+    }
+  }
+
+  void _showError(String message) {
     showCupertinoDialog<void>(
       context: context,
       builder: (ctx) => CupertinoAlertDialog(
         title: const Text('送信できませんでした'),
-        content: const Text('通信を確認して、もう一度お試しください。'),
+        content: Text(message),
         actions: [
           CupertinoDialogAction(
             onPressed: () => Navigator.of(ctx).pop(),
@@ -99,6 +122,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     PostCard(
                       post: widget.post,
                       onDelete: _isMine ? _deletePost : null,
+                      onReport: _isMine ? null : _reportPost,
                     ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(28, 16, 28, 8),
@@ -122,7 +146,12 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                         ),
                       ),
                     for (final comment in comments)
-                      _CommentTile(comment: comment),
+                      _CommentTile(
+                        comment: comment,
+                        onReport: comment.authorId == widget.repository.uid
+                            ? null
+                            : () => _reportComment(comment),
+                      ),
                   ],
                 );
               },
@@ -142,9 +171,12 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 }
 
 class _CommentTile extends StatelessWidget {
-  const _CommentTile({required this.comment});
+  const _CommentTile({required this.comment, this.onReport});
 
   final PostComment comment;
+
+  /// 自分以外のコメントのときだけ渡す。渡されると「…」ボタンが出る
+  final VoidCallback? onReport;
 
   @override
   Widget build(BuildContext context) {
@@ -161,9 +193,25 @@ class _CommentTile extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                '${anonymousName(comment.authorId)}  ${timeAgo(comment.createdAt)}',
-                style: TextStyle(fontSize: 12, color: p.textSecondary),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${anonymousName(comment.authorId)}  ${timeAgo(comment.createdAt)}',
+                      style: TextStyle(fontSize: 12, color: p.textSecondary),
+                    ),
+                  ),
+                  if (onReport != null)
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: onReport,
+                      child: Icon(
+                        CupertinoIcons.ellipsis,
+                        size: 16,
+                        color: p.textSecondary,
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(height: 6),
               Text(

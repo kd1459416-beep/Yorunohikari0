@@ -8,7 +8,13 @@ import 'post.dart';
 /// タイムライン上の1枚の投稿カード。
 /// [onTap] が null のとき（詳細画面）は、タップできない見た目にする。
 class PostCard extends StatelessWidget {
-  const PostCard({super.key, required this.post, this.onTap, this.onDelete});
+  const PostCard({
+    super.key,
+    required this.post,
+    this.onTap,
+    this.onDelete,
+    this.onReport,
+  });
 
   final Post post;
   final VoidCallback? onTap;
@@ -16,11 +22,15 @@ class PostCard extends StatelessWidget {
   /// 自分の投稿のときだけ渡す。渡されると「…」ボタンが出る
   final VoidCallback? onDelete;
 
+  /// 自分以外の投稿のときだけ渡す。渡されると「…」ボタンが出る
+  final VoidCallback? onReport;
+
   @override
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
     final categoryColor = post.category.color(p);
     final meta = TextStyle(fontSize: 12, color: p.textSecondary);
+    final onMore = onDelete ?? onReport;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -51,10 +61,10 @@ class PostCard extends StatelessWidget {
                     const SizedBox(width: 10),
                     Text(timeAgo(post.createdAt), style: meta),
                     const Spacer(),
-                    if (onDelete != null)
+                    if (onMore != null)
                       GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onTap: onDelete,
+                        onTap: onMore,
                         child: Padding(
                           padding: const EdgeInsets.only(left: 12),
                           child: Icon(
