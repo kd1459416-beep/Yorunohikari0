@@ -9,7 +9,7 @@ plugins {
 
 android {
     namespace = "com.yorunohikari.app"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 37 // flutter_local_notificationsがSDK37以上を要求するため固定
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
