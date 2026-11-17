@@ -8,8 +8,8 @@ plugins {
 }
 
 android {
-    namespace = "com.example.yorunohikari"
-    compileSdk = flutter.compileSdkVersion
+    namespace = "com.yorunohikari.app"
+    compileSdk = 37 // flutter_local_notificationsがSDK37以上を要求するため固定
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -19,7 +19,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.yorunohikari"
+        applicationId = "com.yorunohikari.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

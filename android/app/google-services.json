@@ -12,7 +12,12 @@
           "package_name": "com.example.yorunohikari"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "744624841714-hp9lds5pnlhntb1g76aejitupiaafcn2.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCc_eor3EeeoYJel_uFMm76BoYVghNjesk"
@@ -20,7 +25,63 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "744624841714-hp9lds5pnlhntb1g76aejitupiaafcn2.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "744624841714-0vrf4b5o3fe9kgo2mo2jtth37r30ga3e.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.yorunohikari"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:744624841714:android:66cb5581745035d07bc16b",
+        "android_client_info": {
+          "package_name": "com.yorunohikari.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "744624841714-cihg08c44mjlia5s3mrt8i9ebfsrup3d.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.yorunohikari.app",
+            "certificate_hash": "b2bdc19ac0d4d3cbfec2e2c012c0d60224f5931a"
+          }
+        },
+        {
+          "client_id": "744624841714-hp9lds5pnlhntb1g76aejitupiaafcn2.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCc_eor3EeeoYJel_uFMm76BoYVghNjesk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "744624841714-hp9lds5pnlhntb1g76aejitupiaafcn2.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "744624841714-0vrf4b5o3fe9kgo2mo2jtth37r30ga3e.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.yorunohikari"
+              }
+            }
+          ]
         }
       }
     }
