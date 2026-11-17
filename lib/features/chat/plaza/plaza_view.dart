@@ -24,8 +24,19 @@ class _PlazaViewState extends State<PlazaView> {
   PostCategory? _filter; // null = すべて
   late final Stream<List<Post>> _posts = _repository.watchPosts();
 
+  /// 「すべて」+ カテゴリの並び。ピルの並びと揃えてある
+  static const _categoryCycle = <PostCategory?>[null, ...PostCategory.values];
+
   void _selectFilter(PostCategory? category) =>
       setState(() => _filter = category);
+
+  /// フィード本体を左右にスワイプしてカテゴリを切り替える（ピルのタップと併用）
+  void _shiftFilter(int delta) {
+    final i = _categoryCycle.indexOf(_filter);
+    final next =
+        _categoryCycle[(i + delta) % _categoryCycle.length];
+    _selectFilter(next);
+  }
 
   Future<void> _compose() async {
     final draft = await showPostComposer(
@@ -94,13 +105,25 @@ class _PlazaViewState extends State<PlazaView> {
             CategoryChips(selected: _filter, onSelected: _selectFilter),
             const SizedBox(height: 8),
             Expanded(
-              child: _PostFeed(
-                posts: _posts,
-                category: _filter,
-                myUid: _repository.uid,
-                onOpen: _openDetail,
-                onDelete: _delete,
-                onReport: _report,
+              child: GestureDetector(
+                // 投稿が0件のカテゴリ（空の表示）でも、画面全体でスワイプを拾えるようにする
+                behavior: HitTestBehavior.opaque,
+                onHorizontalDragEnd: (details) {
+                  final velocity = details.primaryVelocity ?? 0;
+                  if (velocity < -200) {
+                    _shiftFilter(1); // 左スワイプ → 次のカテゴリ
+                  } else if (velocity > 200) {
+                    _shiftFilter(-1); // 右スワイプ → 前のカテゴリ
+                  }
+                },
+                child: _PostFeed(
+                  posts: _posts,
+                  category: _filter,
+                  myUid: _repository.uid,
+                  onOpen: _openDetail,
+                  onDelete: _delete,
+                  onReport: _report,
+                ),
               ),
             ),
           ],

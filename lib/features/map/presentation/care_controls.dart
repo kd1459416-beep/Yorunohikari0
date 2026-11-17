@@ -53,6 +53,7 @@ class CareControls extends StatelessWidget {
                     ),
                     const SizedBox(width: 10),
                     Expanded(
+                      flex: 2,
                       child: ValueListenableBuilder<Duration>(
                         valueListenable: session.elapsed,
                         builder: (_, d, _) => Text(
@@ -62,13 +63,30 @@ class CareControls extends StatelessWidget {
                         ),
                       ),
                     ),
-                    CupertinoButton(
-                      onPressed: () => _cancel(context),
-                      child: const Text('取消'),
-                    ),
-                    CupertinoButton.filled(
-                      onPressed: () => _finish(context),
-                      child: const Text('終了'),
+                    // 画面端ぎりぎりではなく、どちらの手からでも届くよう中央寄りに集める
+                    Expanded(
+                      flex: 3,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          CupertinoButton(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 10,
+                            ),
+                            onPressed: () => _cancel(context),
+                            child: const Text('取消'),
+                          ),
+                          CupertinoButton.filled(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 26,
+                              vertical: 12,
+                            ),
+                            onPressed: () => _finish(context),
+                            child: const Text('終了'),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 )
