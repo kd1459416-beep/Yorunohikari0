@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ヨルノヒカリ — 展示サイト</title>
+<style>
+  :root {
+    --bg: #faf8fb;
+    --surface: #ffffff;
+    --surface-2: #f2eff9;
+    --text: #211f3d;
+    --text-dim: #615d82;
+    --accent: #a9731e;
+    --accent-2: #6a62b8;
+    --border: rgba(40,30,70,0.12);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Noto Sans JP", system-ui, sans-serif;
+    line-height: 1.85;
+  }
+  body {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 40px 20px 100px;
+  }
+  header {
+    margin-bottom: 40px;
+  }
+  header .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  header h1 {
+    font-size: 30px;
+    margin: 10px 0 4px;
+  }
+  header .meta {
+    color: var(--text-dim);
+    font-size: 13.5px;
+  }
+  nav.toc {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 24px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  nav.toc a {
+    display: block;
+    text-decoration: none;
+    font-size: 13px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  section { margin: 48px 0; }
+  section h2 {
+    font-size: 21px;
+    border-left: 4px solid var(--accent);
+    padding-left: 12px;
+    margin-bottom: 18px;
+  }
+  section h3 {
+    font-size: 16.5px;
+    margin: 22px 0 6px;
+    color: var(--accent);
+  }
+  p { margin: 0 0 12px; }
+  ul { margin: 0 0 12px; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th { background: var(--surface-2); font-size: 12.5px; color: var(--text-dim); }
+  tr:last-child td { border-bottom: none; }
+  .note {
+    background: var(--surface-2);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 13.5px;
+    color: var(--text-dim);
+  }
+  .note b { color: var(--text); }
+  footer {
+    margin-top: 60px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 12.5px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="eyebrow">神戸電子専門学校 AIシステム開発学科</span>
+  <h1>ヨルノヒカリ</h1>
+  <div class="meta">花房舞央 ／ 個人開発プロジェクト</div>
+  <ul class="toc">
+    <li><a href="#overview">概要</a></li>
+    <li><a href="#background">開発背景</a></li>
+    <li><a href="#hypothesis">仮説とアプローチ</a></li>
+    <li><a href="#features">主な機能</a></li>
+    <li><a href="#comparison">競合比較</a></li>
+    <li><a href="#stack">技術スタック</a></li>
+    <li><a href="#roadmap">開発ロードマップ</a></li>
+  </ul>
+</header>
+
+<section id="overview">
+  <h2>概要</h2>
+  <p>深夜に一人で授乳や夜泣きに向き合う保護者を対象に、他者の気配を光によって感じさせることで心理的孤独を和らげる育児サポートアプリ。</p>
+  <p><b>ターゲット：</b>0〜1歳前後の乳幼児を持つ保護者。特に夜間対応を行う母親・父親</p>
+</section>
+
+<section id="background">
+  <h2>開発背景</h2>
+  <h3>開発のきっかけ</h3>
+  <p>当初は赤ちゃんの嚥下音を解析し哺乳量を可視化する技術に取り組んでいましたが、助産師・保育士・子育て中の保護者へのヒアリングを重ねる中で、技術面・実用面の両方で大きな壁があることが分かり方向転換しました。ヒアリングをする中で見えてきたのが「夜間育児の孤独感」という、より本質的な課題でした。本アプリはこの課題に向き合うために開発しています。</p>
+  <h3>市場・社会的背景</h3>
+  <p>株式会社カラダノートの『夜間育児に関する調査』によると、52.7%の保護者が「夜間育児に孤独を感じたことがある」と回答されています。深夜帯特有の「家族を起こすことへの罪悪感」「周囲に相談できない閉塞感」が精神的負荷を高めている。孤独感が高まると産後うつの要因にもなり得る。</p>
+</section>
+
+<section id="hypothesis">
+  <h2>仮説とアプローチ</h2>
+  <div class="card">
+    <h3>仮説① 緩やかな社会との繋がり</h3>
+    <p>SNS上の繋がりを支えと感じる母親が多いという調査結果から、ゆるやかな繋がりが孤独感を緩和する可能性があると考えました。会話のコストをかけずに「気配」だけを感じ合える距離感を目指しています。</p>
+  </div>
+  <div class="card">
+    <h3>仮説② AI対話による感情ケア</h3>
+    <p>AIチャットボットとの対話が抑うつや孤独感を軽減したという研究結果から、同様の仕組みが支えになる可能性があると考えました。アドバイスより先に、まず気持ちを受け止めることを優先する設計にしています。</p>
+  </div>
+  <p class="note">※いずれも「効果が実証された解決策」ではなく、既存研究をもとに立てた仮説として位置づけ、今後の実証実験で検証していく段階です。</p>
+</section>
+
+<section id="features">
+  <h2>主な機能</h2>
+  <p>夜間の孤独感を和らげ、育児をサポートする4つの主要機能があります。</p>
+
+  <h3>1. リアルタイムで他者の存在を可視化（灯火マップ、人数表示）</h3>
+  <p>日本地図上に現在同時接続しているユーザーの「灯火」が灯り、接続人数を表示。位置は登録した地域からランダムに±約2.5kmずらして表示するため、自宅が特定されることはありません。</p>
+
+  <h3>2. 授乳・夜泣き時間の計測</h3>
+  <p>ワンタップで授乳・寝かしつけの時間を計測・記録。睡眠不足時でも簡単に操作でき、次回授乳タイミングや時間帯別の傾向をグラフで振り返ることができます。</p>
+
+  <h3>3. 選べる2つの相談先（匿名掲示板＆AIチャット）</h3>
+  <p><b>リアルママ広場：</b>完全匿名・いつでも入退室可能な掲示板形式の相談広場。暴言や連絡先交換を検知するNGワードフィルタを設置し、複数人から通報された投稿は自動的に非表示になるなど、最低限のモデレーションを行っています。</p>
+  <p><b>AIママ相談室：</b>24時間いつでも弱音や感情を吐き出せる生成AI対話機能。アドバイスより先に、まず気持ちを受け止めるよう設計しています。</p>
+
+  <h3>4. ヒーリング音楽</h3>
+  <p>赤ちゃんの入眠を促す音源をアプリ内で再生可能。使用する音源は、全て権利処理済みの商用利用可能なフリー素材を採用しています。アプリに内蔵しているため、通信不要でオフラインでも再生できます。</p>
+
+  <h3>デザインのこだわり</h3>
+  <p>赤ちゃんを抱っこしながら片手でスマホを触る機会が多いとの声を聞き、片手でもスマホを操作しやすいように画面下部で操作が完結するUIを設計しました。</p>
+</section>
+
+<section id="comparison">
+  <h2>競合比較</h2>
+  <p>授乳記録アプリとしては「授乳ノート」や「ぴよログ」が広く使われていますが、記録機能の詳しさという点では、ヨルノヒカリはまだそれらに及びません。そこは今後の課題と考えています。</p>
+  <p>一方で、「仲間の可視化（灯火マップ）」「AI相談」「ヒーリング音楽」の3機能は、既存の育児記録アプリにはないヨルノヒカリ独自の強みです。記録に留まらず、孤独感そのものに向き合う設計にしている点が差別化ポイントです。</p>
+</section>
+
+<section id="stack">
+  <h2>システム構成・技術スタック</h2>
+  <table>
+    <tr><th>レイヤー</th><th>技術</th><th>役割</th></tr>
+    <tr><td>フロントエンド</td><td>Flutter / Dart</td><td>iOS・Androidを1つのコードベースで開発</td></tr>
+    <tr><td>地図</td><td>flutter_map, latlong2, OpenStreetMap / Esri タイル</td><td>地図の描画と座標計算（タイル画像の配信元を借りているのみで、契約やAPIキーは不要）</td></tr>
+    <tr><td>AI</td><td>Gemini API（google_generative_ai）</td><td>AIママ相談室の応答生成。gemini-3.5-flash-liteを優先利用し、混雑時はgemini-3.8-flashへ自動フォールバック</td></tr>
+    <tr><td>認証</td><td>Firebase Authentication</td><td>メール/パスワードに加え、匿名ログインにも対応</td></tr>
+    <tr><td>データベース</td><td>Cloud Firestore</td><td>灯りの状態・記録・チャット投稿をリアルタイムに同期</td></tr>
+    <tr><td>通知</td><td>flutter_local_notifications, timezone</td><td>授乳リマインダーを端末のローカル通知で予約</td></tr>
+  </table>
+
+  <h3 style="margin-top:24px;">開発上の工夫</h3>
+  <ul>
+    <li><b>プライバシーに配慮した可視化：</b>位置情報はGPSではなく、登録した地域の座標をもとに算出し、さらにランダムに±約2.5kmずらしてから地図に表示。自宅や現在地が特定されない設計にしている。</li>
+    <li><b>深夜でも固まらない通信設計：</b>記録や灯りの書き込みは、保存の完了を待たずに画面へ即時反映。Firestoreの端末キャッシュにより、電波が弱い状況でも操作が止まらない。</li>
+    <li><b>AIの失敗に強い設計：</b>Gemini APIが混雑・タイムアウト・設定ミスなどで失敗した場合、原因ごとに異なる分かりやすい日本語メッセージを表示し、必要に応じて別モデルへ自動的に切り替える。</li>
+    <li><b>最低限のモデレーション：</b>匿名掲示板への投稿・コメントには、暴言や連絡先交換を検知するNGワードフィルタを設置。複数人から通報された投稿は自動的に非表示になる。</li>
+  </ul>
+</section>
+
+<section id="roadmap">
+  <h2>開発ロードマップ</h2>
+  <table>
+    <tr><th>フェーズ</th><th>内容</th></tr>
+    <tr>
+      <td>Phase 1（完了）</td>
+      <td>UI/UX・フロントエンド開発（地図の灯火、記録、匿名チャット、ヒーリングBGM）</td>
+    </tr>
+    <tr>
+      <td>Phase 2（実装は完了、実証実験はこれから）</td>
+      <td>認証・データベース・AI連携などバックエンドの実装、Firestoreセキュリティルールの整備。次は実際の利用者によるユーザーテスト</td>
+    </tr>
+    <tr>
+      <td>Phase 3（マネタイズ）</td>
+      <td>
+        マネタイズにおいては、主に2つのモデルを想定しています。<br>
+        1つは、アプリ内バナー広告の掲載による「広告収益」です。<br>
+        2つ目は、自治体の「孤独・孤立対策」予算や産後ケア施設を活用した「自治体SaaSモデル（夜間ケアパッケージ）」です。ライセンスとして提供することで事業の持続可能性を高め、地域の保護者の方々へ無償で届ける仕組みを目指します。
+      </td>
+    </tr>
+  </table>
+</section>
+
+<footer>
+  神戸電子専門学校 AIシステム開発学科 個人開発プロジェクト（開発：花房舞央）
+</footer>
+
+</body>
+</html>
